@@ -50,9 +50,8 @@ def generate_narma10(
         AssertionError: If generated input falls outside [0, 0.5].
     """
     u = rng.uniform(0.0, 0.5, size=length)
-    assert 0 <= u.min() and u.max() <= 0.5, (
-        f'NARMA-10 input out of range: [{u.min()}, {u.max()}]'
-    )
+    if not (0 <= u.min() and u.max() <= 0.5):
+        raise ValueError(f'NARMA-10 input out of range: [{u.min()}, {u.max()}]')
     y = np.zeros(length + 1, dtype=np.float64)
     for t in range(_NARMA_ORDER, length):
         y_sum = np.sum(y[t - _NARMA_ORDER + 1 : t + 1])
