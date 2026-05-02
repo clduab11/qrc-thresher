@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from qrc_thresher.metrics.scoring import memory_capacity
 from qrc_thresher.reservoirs.pennylane_qrc import (

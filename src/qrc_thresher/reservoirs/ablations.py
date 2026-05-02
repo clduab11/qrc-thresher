@@ -14,7 +14,7 @@ import numpy as np
 import pennylane as qml
 from numpy.random import Generator
 
-from qrc_thresher.reservoirs.pennylane_qrc import QRCParams, _ENCODING_SCALE
+from qrc_thresher.reservoirs.pennylane_qrc import _ENCODING_SCALE, QRCParams
 
 logger = logging.getLogger(__name__)
 

@@ -127,6 +127,8 @@ def run_cmd(task: str, config_path: str, seed: Optional[int]) -> None:
     artifact_paths: list[str] = []
     success = False
     failure_reason = None
+    primary_metric_name = ''
+    primary_metric_value: Optional[float] = None
 
     try:
         rng_task = np.random.default_rng(task_seed)
@@ -179,6 +181,8 @@ def run_cmd(task: str, config_path: str, seed: Optional[int]) -> None:
             with timer.stage('evaluation'):
                 y_pred = model.predict(X[ds.train_end :])
                 mc = memory_capacity(y_pred, ds.targets[ds.train_end :])
+                primary_metric_name = 'mc'
+                primary_metric_value = float(mc)
                 click.echo(f'STM Memory Capacity: {mc:.4f}')
 
         elif task == 'parity':
@@ -220,6 +224,8 @@ def run_cmd(task: str, config_path: str, seed: Optional[int]) -> None:
             with timer.stage('evaluation'):
                 y_pred = model.predict(X[ds.train_end :])
                 acc = classification_accuracy(y_pred, ds.targets[ds.train_end :])
+                primary_metric_name = 'accuracy'
+                primary_metric_value = float(acc)
                 click.echo(f'Parity accuracy (window={window}): {acc:.4f}')
 
         else:  # narma
@@ -259,6 +265,8 @@ def run_cmd(task: str, config_path: str, seed: Optional[int]) -> None:
             with timer.stage('evaluation'):
                 y_pred = model.predict(X[ds.train_end :])
                 err = nrmse(y_pred, ds.targets[ds.train_end :])
+                primary_metric_name = 'nrmse'
+                primary_metric_value = float(err)
                 click.echo(f'NARMA-10 NRMSE: {err:.4f}')
 
         success = True
@@ -280,6 +288,9 @@ def run_cmd(task: str, config_path: str, seed: Optional[int]) -> None:
         success=success,
         failure_reason=failure_reason,
         artifact_paths=artifact_paths,
+        task_name=task,
+        primary_metric_name=primary_metric_name,
+        primary_metric_value=primary_metric_value,
     )
     append_to_csv(manifest)
     total_seconds = sum(timing.values())
@@ -315,6 +326,8 @@ def ablation_cmd(name: str, config_path: str, seed: Optional[int]) -> None:
     success = False
     failure_reason = None
     circuit_hash = f'ablation:{name}'
+    primary_metric_name = ''
+    primary_metric_value: Optional[float] = None
 
     try:
         rng_task = np.random.default_rng(task_seed)
@@ -381,6 +394,8 @@ def ablation_cmd(name: str, config_path: str, seed: Optional[int]) -> None:
         with timer.stage('evaluation'):
             y_pred = model.predict(X[ds.train_end :])
             mc = memory_capacity(y_pred, ds.targets[ds.train_end :])
+            primary_metric_name = 'mc'
+            primary_metric_value = float(mc)
             click.echo(f'Ablation "{name}" STM MC: {mc:.4f}')
 
         success = True
@@ -401,6 +416,9 @@ def ablation_cmd(name: str, config_path: str, seed: Optional[int]) -> None:
         success=success,
         failure_reason=failure_reason,
         artifact_paths=[],
+        task_name=f'ablation:{name}',
+        primary_metric_name=primary_metric_name,
+        primary_metric_value=primary_metric_value,
     )
     append_to_csv(manifest)
     update_cumulative_compute(sum(timing.values()))
@@ -415,49 +433,246 @@ def ablation_cmd(name: str, config_path: str, seed: Optional[int]) -> None:
     type=click.Choice(['G0', 'G0.5', 'G1', 'G2', 'G2.5', 'G3', 'G4', 'G5']),
 )
 def gate_cmd(name: str) -> None:
-    """Evaluate a decision gate and write results/gates/<name>.json.
+    """Evaluate a decision gate from results/runs.csv.
 
-    Exit code 0 on PASS, 1 on FAIL, 2 on INSUFFICIENT EVIDENCE.
+    Gates are machine-checkable kill-gates. Exit code:
+        0 = PASS
+        1 = FAIL
+        2 = INSUFFICIENT_EVIDENCE (not enough data to decide)
+
+    Each gate writes results/gates/<name>.json with the verdict, the
+    contributing run_ids, and the numerical evidence so reviewers can audit
+    the decision against the manifest.
     """
     import pandas as pd
 
     gates_dir = Path('results') / 'gates'
     gates_dir.mkdir(parents=True, exist_ok=True)
 
+    # G0 is special: it reads the latest health report rather than runs.csv.
+    if name == 'G0':
+        result, evidence, run_ids = _evaluate_gate_g0()
+        _write_gate_result(gates_dir, name, result, evidence, run_ids)
+        click.echo(f'Gate {name}: {result}')
+        sys.exit({'PASS': 0, 'FAIL': 1, 'INSUFFICIENT_EVIDENCE': 2}.get(result, 2))
+
     runs_csv = Path('results') / 'runs.csv'
     if not runs_csv.exists():
-        click.echo(f'INSUFFICIENT EVIDENCE: no runs.csv found at {runs_csv}')
-        _write_gate_result(gates_dir, name, 'INSUFFICIENT_EVIDENCE', {}, [])
+        click.echo(f'INSUFFICIENT_EVIDENCE: no runs.csv found at {runs_csv}')
+        _write_gate_result(
+            gates_dir,
+            name,
+            'INSUFFICIENT_EVIDENCE',
+            {'message': f'{runs_csv} not found'},
+            [],
+        )
         sys.exit(2)
 
     df = pd.read_csv(runs_csv)
-    successful_runs = df[df['success'].astype(str).str.lower() == 'true']
-    run_ids = successful_runs['run_id'].tolist()
+    successful = df[df['success'].astype(str).str.lower() == 'true'].copy()
 
-    if name == 'G0':
-        result = 'PASS'
-        evidence = {'message': 'G0 evaluated by running health command'}
-
-    elif name in ('G0.5', 'G5'):
-        result = 'INSUFFICIENT_EVIDENCE'
-        evidence = {'message': f'{name}: requires crosscheck run data'}
-
-    elif name in ('G1', 'G2', 'G2.5', 'G3', 'G4'):
+    if name == 'G1':
+        result, evidence, run_ids = _evaluate_gate_g1(successful)
+    elif name == 'G2':
+        result, evidence, run_ids = _evaluate_gate_g2(successful)
+    elif name == 'G2.5':
+        result, evidence, run_ids = _evaluate_gate_g25(successful)
+    elif name in ('G0.5', 'G3', 'G4', 'G5'):
+        # These gates require artifacts (cross-check residuals, paired ESN
+        # comparison data, multi-cell sweeps) that the current CLI does not
+        # yet collect into runs.csv. They emit INSUFFICIENT_EVIDENCE with a
+        # descriptive message and a non-zero exit code so CI fails loudly
+        # rather than silently passing.
         result = 'INSUFFICIENT_EVIDENCE'
         evidence = {
-            'message': f'{name}: requires benchmark runs with sufficient n_seeds',
-            'n_runs': len(successful_runs),
+            'message': (
+                f'{name} requires supplementary artifacts (paired baseline '
+                f'runs, cross-check residuals) that are not yet logged in '
+                f'runs.csv. Implement the corresponding sweep before '
+                f'evaluating this gate.'
+            ),
+            'n_successful_runs': int(len(successful)),
         }
-
+        run_ids = successful['run_id'].astype(str).tolist()
     else:
         result = 'INSUFFICIENT_EVIDENCE'
         evidence = {'message': f'Unknown gate: {name}'}
+        run_ids = []
 
     _write_gate_result(gates_dir, name, result, evidence, run_ids)
     click.echo(f'Gate {name}: {result}')
 
     exit_codes = {'PASS': 0, 'FAIL': 1, 'INSUFFICIENT_EVIDENCE': 2}
     sys.exit(exit_codes.get(result, 2))
+
+
+def _latest_health_report() -> Optional[dict]:
+    """Return the JSON content of the most recent health report, or None."""
+    health_dir = Path('results') / 'health'
+    if not health_dir.exists():
+        return None
+    candidates = sorted(health_dir.glob('*.json'))
+    if not candidates:
+        return None
+    try:
+        with candidates[-1].open('r') as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _evaluate_gate_g0() -> tuple[str, dict, list]:
+    """G0 PASS iff the latest health report's overall is PASS."""
+    report = _latest_health_report()
+    if report is None:
+        return (
+            'INSUFFICIENT_EVIDENCE',
+            {'message': 'No health report found. Run `qrc-thresher health` first.'},
+            [],
+        )
+    overall = report.get('overall', 'FAIL')
+    return (
+        'PASS' if overall == 'PASS' else 'FAIL',
+        {'overall': overall, 'timestamp_utc': report.get('timestamp_utc', '')},
+        [],
+    )
+
+
+def _filter_task(df, task_name: str):  # type: ignore[no-untyped-def]
+    """Return successful rows whose task_name matches (handles legacy rows)."""
+    if 'task_name' in df.columns:
+        return df[df['task_name'].astype(str) == task_name]
+    return df.iloc[0:0]
+
+
+def _metric_values(df, metric_name: str) -> list:  # type: ignore[no-untyped-def]
+    """Pull primary_metric_value from rows whose primary_metric_name matches."""
+    if 'primary_metric_name' not in df.columns or 'primary_metric_value' not in df.columns:
+        return []
+    sub = df[df['primary_metric_name'].astype(str) == metric_name]
+    if sub.empty:
+        return []
+    import pandas as pd
+
+    vals = pd.to_numeric(sub['primary_metric_value'], errors='coerce').dropna()
+    return [float(v) for v in vals.tolist()]
+
+
+def _evaluate_gate_g1(successful) -> tuple[str, dict, list]:  # type: ignore[no-untyped-def]
+    """G1: STM MC > 1.0 AND >=20% above no_entangle ablation MC.
+
+    Pre-registered minimum n_seeds is 5 (per BUILD_SPEC §15.3).
+    """
+    qrc = _filter_task(successful, 'stm')
+    qrc_mcs = _metric_values(qrc, 'mc')
+    abl = _filter_task(successful, 'ablation:no_entangle')
+    abl_mcs = _metric_values(abl, 'mc')
+
+    n_seeds = len(qrc_mcs)
+    evidence = {
+        'qrc_n_runs': n_seeds,
+        'no_entangle_n_runs': len(abl_mcs),
+        'qrc_mc_mean': float(sum(qrc_mcs) / n_seeds) if qrc_mcs else None,
+        'no_entangle_mc_mean': (
+            float(sum(abl_mcs) / len(abl_mcs)) if abl_mcs else None
+        ),
+    }
+    run_ids = qrc['run_id'].astype(str).tolist() + abl['run_id'].astype(str).tolist()
+
+    if n_seeds < 5 or not abl_mcs:
+        evidence['message'] = (
+            'Need >=5 STM runs and >=1 no_entangle ablation run with '
+            'primary_metric_value=mc.'
+        )
+        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
+
+    qrc_mean = evidence['qrc_mc_mean']
+    abl_mean = evidence['no_entangle_mc_mean']
+    margin_pct = (qrc_mean - abl_mean) / abl_mean if abl_mean and abl_mean > 0 else 0.0
+    evidence['margin_pct'] = margin_pct
+    if qrc_mean > 1.0 and margin_pct >= 0.20:
+        return 'PASS', evidence, run_ids
+    return 'FAIL', evidence, run_ids
+
+
+def _evaluate_gate_g2(successful) -> tuple[str, dict, list]:  # type: ignore[no-untyped-def]
+    """G2: parity accuracy > 70% AND random_features ablation accuracy < 60%."""
+    qrc = _filter_task(successful, 'parity')
+    qrc_accs = _metric_values(qrc, 'accuracy')
+    abl = _filter_task(successful, 'ablation:random_features')
+    # The random_features ablation runs against STM by default; for a parity
+    # comparison we look up its accuracy if logged. Either accuracy (parity
+    # ablation) or fall back to the captured value.
+    abl_accs = _metric_values(abl, 'accuracy')
+
+    n_seeds = len(qrc_accs)
+    evidence = {
+        'qrc_n_runs': n_seeds,
+        'random_features_n_runs': len(abl_accs),
+        'qrc_accuracy_mean': (
+            float(sum(qrc_accs) / n_seeds) if qrc_accs else None
+        ),
+        'random_features_accuracy_mean': (
+            float(sum(abl_accs) / len(abl_accs)) if abl_accs else None
+        ),
+    }
+    run_ids = qrc['run_id'].astype(str).tolist() + abl['run_id'].astype(str).tolist()
+
+    if n_seeds < 5:
+        evidence['message'] = 'Need >=5 parity runs with primary_metric_value=accuracy.'
+        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
+
+    qrc_mean = evidence['qrc_accuracy_mean']
+    abl_mean = evidence['random_features_accuracy_mean']
+    if abl_mean is None:
+        evidence['message'] = (
+            'Need at least one parity-task random_features ablation run '
+            'with accuracy logged.'
+        )
+        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
+
+    if qrc_mean > 0.70 and abl_mean < 0.60:
+        return 'PASS', evidence, run_ids
+    return 'FAIL', evidence, run_ids
+
+
+def _evaluate_gate_g25(successful) -> tuple[str, dict, list]:  # type: ignore[no-untyped-def]
+    """G2.5: full QRC outperforms Haar-random ablation by >=1 SE on STM-MC or parity-acc."""
+    import math
+
+    qrc_stm = _metric_values(_filter_task(successful, 'stm'), 'mc')
+    haar = _metric_values(_filter_task(successful, 'ablation:haar'), 'mc')
+
+    evidence: dict = {
+        'qrc_stm_n_runs': len(qrc_stm),
+        'haar_n_runs': len(haar),
+    }
+    run_ids = (
+        _filter_task(successful, 'stm')['run_id'].astype(str).tolist()
+        + _filter_task(successful, 'ablation:haar')['run_id'].astype(str).tolist()
+    )
+
+    if len(qrc_stm) < 3 or len(haar) < 3:
+        evidence['message'] = 'Need >=3 STM runs and >=3 Haar ablation runs.'
+        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
+
+    qrc_mean = sum(qrc_stm) / len(qrc_stm)
+    haar_mean = sum(haar) / len(haar)
+    qrc_var = sum((v - qrc_mean) ** 2 for v in qrc_stm) / max(len(qrc_stm) - 1, 1)
+    haar_var = sum((v - haar_mean) ** 2 for v in haar) / max(len(haar) - 1, 1)
+    pooled_se = math.sqrt(qrc_var / len(qrc_stm) + haar_var / len(haar))
+    evidence['qrc_stm_mean'] = qrc_mean
+    evidence['haar_stm_mean'] = haar_mean
+    evidence['pooled_se'] = pooled_se
+    evidence['delta'] = qrc_mean - haar_mean
+
+    if pooled_se == 0:
+        evidence['message'] = 'Zero pooled standard error; check inputs.'
+        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
+
+    if (qrc_mean - haar_mean) >= pooled_se:
+        return 'PASS', evidence, run_ids
+    return 'FAIL', evidence, run_ids
 
 
 def _write_gate_result(

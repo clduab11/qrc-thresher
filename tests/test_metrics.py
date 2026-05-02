@@ -6,13 +6,12 @@ import numpy as np
 import pytest
 
 from qrc_thresher.metrics.scoring import (
-    _check_finite,
     _safe_corrcoef,
     classification_accuracy,
     memory_capacity,
     nrmse,
 )
-from qrc_thresher.metrics.stats import bootstrap_ci, paired_test, wilcoxon_test
+from qrc_thresher.metrics.stats import bootstrap_ci, paired_test
 
 
 class TestMemoryCapacity:

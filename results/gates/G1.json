@@ -1,0 +1,9 @@
+{
+  "gate": "G1",
+  "result": "INSUFFICIENT_EVIDENCE",
+  "evidence": {
+    "message": "results/runs.csv not found"
+  },
+  "run_ids": [],
+  "timestamp_utc": "2026-05-02T05:03:28.692360+00:00"
+}

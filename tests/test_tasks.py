@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from qrc_thresher.tasks.narma10 import generate_narma10
 from qrc_thresher.tasks.stm import generate_stm

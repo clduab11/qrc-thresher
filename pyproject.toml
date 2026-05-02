@@ -26,6 +26,9 @@ dependencies = [
     "click>=8.1",
 ]
 
+[project.scripts]
+qrc-thresher = "qrc_thresher.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

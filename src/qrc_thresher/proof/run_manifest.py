@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import platform as _platform
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,11 @@ CSV_FIELDNAMES = [
     'failure_reason',
     'artifact_paths',
     'package_versions',
+    'platform',
+    'cli_command',
+    'task_name',
+    'primary_metric_name',
+    'primary_metric_value',
 ]
 
 
@@ -73,6 +79,11 @@ class RunManifest:
     success: bool
     failure_reason: Optional[str]
     artifact_paths: List[str]
+    platform: str = ''
+    cli_command: str = ''
+    task_name: str = ''
+    primary_metric_name: str = ''
+    primary_metric_value: Optional[float] = None
 
 
 def _git_commit_hash() -> str:
@@ -146,6 +157,22 @@ def _config_hash(config_path: Path) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def _platform_string() -> str:
+    """Get a compact platform descriptor for provenance."""
+    try:
+        return f'{_platform.system()}-{_platform.release()}-{_platform.machine()}'
+    except Exception:
+        return 'unknown'
+
+
+def _cli_command() -> str:
+    """Reconstruct the CLI invocation from sys.argv (best-effort)."""
+    try:
+        return ' '.join(sys.argv)
+    except Exception:
+        return 'unknown'
+
+
 def create_manifest(
     config_path: Path,
     circuit_hash: str,
@@ -157,6 +184,9 @@ def create_manifest(
     success: bool,
     failure_reason: Optional[str],
     artifact_paths: List[str],
+    task_name: str = '',
+    primary_metric_name: str = '',
+    primary_metric_value: Optional[float] = None,
 ) -> RunManifest:
     """Create a new run manifest record.
 
@@ -171,6 +201,11 @@ def create_manifest(
         success: Whether the run succeeded.
         failure_reason: Failure description if not success.
         artifact_paths: Relative paths to result artifacts.
+        task_name: Task identifier (e.g. 'stm', 'parity', 'narma',
+            'ablation:no_entangle'). Used by gate evaluators.
+        primary_metric_name: Name of the run's primary metric (e.g. 'mc',
+            'accuracy', 'nrmse'). Empty when not applicable.
+        primary_metric_value: Value of the primary metric, if computed.
 
     Returns:
         RunManifest with all required schema v1.1 fields populated.
@@ -196,11 +231,22 @@ def create_manifest(
         success=success,
         failure_reason=failure_reason,
         artifact_paths=artifact_paths,
+        platform=_platform_string(),
+        cli_command=_cli_command(),
+        task_name=task_name,
+        primary_metric_name=primary_metric_name,
+        primary_metric_value=primary_metric_value,
     )
 
 
 def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
-    """Append manifest record to runs.csv (atomic write).
+    """Append a manifest record to ``runs.csv``.
+
+    Atomicity note: this opens the target file in append mode and writes a
+    single row. CPython buffers and ``write()`` make the row write effectively
+    atomic on a single host for typical row sizes, but this function does
+    **not** provide cross-process file locking. Concurrent writers MUST
+    serialize externally; if interrupted mid-flush the row may be partial.
 
     Args:
         manifest: RunManifest to append.
@@ -230,6 +276,11 @@ def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
         'failure_reason': manifest.failure_reason,
         'artifact_paths': json.dumps(manifest.artifact_paths),
         'package_versions': json.dumps(manifest.package_versions),
+        'platform': manifest.platform,
+        'cli_command': manifest.cli_command,
+        'task_name': manifest.task_name,
+        'primary_metric_name': manifest.primary_metric_name,
+        'primary_metric_value': manifest.primary_metric_value,
     }
 
     with csv_path.open('a', newline='') as f:

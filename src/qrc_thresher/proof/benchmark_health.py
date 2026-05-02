@@ -150,7 +150,6 @@ def check_metrics() -> Dict[str, Any]:
 def check_manifest() -> Dict[str, Any]:
     """Check run manifest writer produces a valid record."""
     try:
-        import json
 
         from qrc_thresher.proof.run_manifest import append_to_csv, create_manifest
 

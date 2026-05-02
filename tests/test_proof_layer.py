@@ -7,12 +7,8 @@ import json
 import tempfile
 from pathlib import Path
 
-import numpy as np
-import pytest
-
 from qrc_thresher.proof.run_manifest import (
     CSV_FIELDNAMES,
-    SCHEMA_VERSION,
     RunManifest,
     append_to_csv,
     create_manifest,

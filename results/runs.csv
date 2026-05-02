@@ -1,1 +1,0 @@
-run_id,timestamp_utc,git_commit_hash,git_branch,config_path,config_hash,circuit_hash,task_seed,reservoir_seed,python_version,backend_device,runtime_per_stage_seconds,entanglement_metric,success,failure_reason,artifact_paths,package_versions
