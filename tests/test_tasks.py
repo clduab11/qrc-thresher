@@ -128,3 +128,11 @@ class TestNARMA10:
         ds2 = generate_narma10(length=100, train_frac=0.7, rng=rng2)
         assert np.array_equal(ds1.u, ds2.u)
         assert np.allclose(ds1.targets, ds2.targets)
+
+    def test_recurrence_relation(self) -> None:
+        from qrc_thresher.tasks.narma10 import verify_narma10_recurrence
+        rng = np.random.default_rng(123)
+        ds = generate_narma10(length=200, train_frac=0.7, rng=rng)
+        y_with_initial = np.zeros(201)
+        y_with_initial[1:] = ds.targets
+        assert verify_narma10_recurrence(ds.u, y_with_initial)

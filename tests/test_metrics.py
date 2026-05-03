@@ -11,7 +11,13 @@ from qrc_thresher.metrics.scoring import (
     memory_capacity,
     nrmse,
 )
-from qrc_thresher.metrics.stats import bootstrap_ci, paired_test
+from qrc_thresher.metrics.stats import (
+    bca_ci,
+    bootstrap_ci,
+    holm_bonferroni,
+    paired_test,
+    power_analysis,
+)
 
 
 class TestMemoryCapacity:
@@ -174,3 +180,78 @@ class TestBootstrapCI:
         scores = np.array([1.0, np.nan, 3.0])
         with pytest.raises(ValueError, match='non-finite'):
             bootstrap_ci(scores, rng=rng)
+
+
+class TestBcaCI:
+    """Tests for bca_ci function."""
+
+    def test_ci_contains_mean(self) -> None:
+        rng = np.random.default_rng(42)
+        scores = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        lower, upper = bca_ci(scores, rng=rng, n_resamples=400)
+        mean = float(np.mean(scores))
+        assert lower <= mean <= upper
+
+    def test_non_finite_raises(self) -> None:
+        rng = np.random.default_rng(0)
+        scores = np.array([1.0, np.nan, 3.0])
+        with pytest.raises(ValueError, match='non-finite'):
+            bca_ci(scores, rng=rng)
+
+    def test_requires_minimum_samples(self) -> None:
+        rng = np.random.default_rng(0)
+        scores = np.array([1.0, 2.0])
+        with pytest.raises(ValueError, match='at least 3'):
+            bca_ci(scores, rng=rng)
+
+
+class TestPowerAnalysis:
+    """Tests for power_analysis sample-size estimator."""
+
+    def test_positive_result(self) -> None:
+        n = power_analysis(effect_size=0.5, alpha=0.05, power=0.8)
+        assert n > 0
+
+    def test_larger_effect_requires_fewer_samples(self) -> None:
+        n_small = power_analysis(effect_size=0.3, alpha=0.05, power=0.8)
+        n_large = power_analysis(effect_size=0.8, alpha=0.05, power=0.8)
+        assert n_large < n_small
+
+    def test_invalid_effect_size_raises(self) -> None:
+        with pytest.raises(ValueError, match='effect_size'):
+            power_analysis(effect_size=0.0)
+
+
+class TestHolmBonferroni:
+    """Tests for holm_bonferroni function."""
+
+    def test_basic_functionality(self) -> None:
+        p_values = [0.01, 0.05, 0.10]
+        adjusted = holm_bonferroni(p_values)
+        assert all(0.0 <= p <= 1.0 for p in adjusted)
+
+    def test_smallest_p_least_corrected(self) -> None:
+        p_values = [0.001, 0.01, 0.05, 0.10]
+        adjusted = holm_bonferroni(p_values)
+        sorted_idx = np.argsort(p_values)
+        sorted_adj = np.array(adjusted)[sorted_idx]
+        assert sorted_adj[0] <= sorted_adj[1] <= sorted_adj[2] <= sorted_adj[3]
+
+    def test_non_significant_rejected(self) -> None:
+        p_values = [0.51, 0.51]
+        adjusted = holm_bonferroni(p_values)
+        assert adjusted[0] == 1.0
+
+    def test_single_p_value(self) -> None:
+        adjusted = holm_bonferroni([0.05])
+        assert adjusted[0] == 0.05
+
+    def test_p05_in_family_of_5(self) -> None:
+        p_values = [0.01, 0.05, 0.10, 0.20, 0.50]
+        adjusted = holm_bonferroni(p_values)
+        original_05_idx = p_values.index(0.05)
+        assert adjusted[original_05_idx] == 0.20
+
+    def test_empty_list_raises(self) -> None:
+        with pytest.raises(ValueError, match='at least one p-value'):
+            holm_bonferroni([])

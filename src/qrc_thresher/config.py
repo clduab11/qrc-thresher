@@ -58,6 +58,7 @@ class ProofConfig(BaseModel):
 
     log_entanglement: bool = True
     log_circuit_hash: bool = True
+    log_artifacts: bool = False
 
 
 class SeedsConfig(BaseModel):
@@ -66,6 +67,16 @@ class SeedsConfig(BaseModel):
     task_seed: int
     reservoir_seed: int
     n_seeds: int = Field(ge=1, le=20)
+
+
+class GateThresholds(BaseModel):
+    """Gate threshold configuration for pre-registered effect size criteria."""
+
+    G1_stm_mc_threshold: float = 1.0
+    G1_margin_pct: float = 0.20
+    G2_accuracy_threshold: float = 0.70
+    G2_random_features_max: float = 0.60
+    G25_effect_se: float = 1.0
 
 
 class AlphaLiteConfig(BaseModel):
@@ -79,6 +90,7 @@ class AlphaLiteConfig(BaseModel):
     training: TrainingConfig
     proof: ProofConfig
     seeds: SeedsConfig
+    gates: Optional[GateThresholds] = None
 
 
 def load_config(path: Path) -> AlphaLiteConfig:
@@ -98,4 +110,53 @@ def load_config(path: Path) -> AlphaLiteConfig:
         raise FileNotFoundError(f'Config file not found: {path}')
     with path.open('r') as f:
         raw = yaml.safe_load(f)
+    if raw.get('_overlay'):
+        raise ValueError(f'Overlay-only config cannot be loaded directly: {path}')
     return AlphaLiteConfig.model_validate(raw)
+
+
+def load_config_with_overlays(
+    base_path: Path,
+    overlays: Optional[List[Path]] = None,
+) -> AlphaLiteConfig:
+    """Load config with optional overlay files.
+
+    Args:
+        base_path: Path to base YAML config file
+        overlays: List of overlay YAML files to apply in order
+
+    Returns:
+        Merged AlphaLiteConfig
+    """
+    base_cfg = load_config(base_path)
+    base_dict = base_cfg.model_dump()
+
+    for overlay_path in overlays or []:
+        overlay_dict = _load_yaml_raw(overlay_path)
+        base_dict = _deep_merge(base_dict, overlay_dict)
+
+    return AlphaLiteConfig.model_validate(base_dict)
+
+
+def _load_yaml_raw(path: Path) -> Dict:
+    """Load YAML file as raw dict without pydantic validation."""
+    if not path.exists():
+        raise FileNotFoundError(f'Config file not found: {path}')
+    with path.open('r') as f:
+        raw = yaml.safe_load(f)
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f'Config must be a dict: {path}')
+    return {k: v for k, v in raw.items() if k != '_overlay'}
+
+
+def _deep_merge(base: Dict, overlay: Dict) -> Dict:
+    """Deep merge overlay dict into base dict."""
+    result = base.copy()
+    for key, value in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result

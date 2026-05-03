@@ -117,3 +117,129 @@ def plot_comparison(
         paths.append(p)
     plt.close(fig)
     return paths
+
+
+def plot_stm_delay_heatmap(
+    mc_by_delay_and_seed: np.ndarray,
+    run_id: str,
+    out_dir: Path,
+    title: str = 'STM Delay Heatmap',
+) -> List[Path]:
+    """Plot heatmap of MC contribution by seed (rows) and delay (cols)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=_FIGURE_SIZE_SINGLE)
+    im = ax.imshow(mc_by_delay_and_seed, aspect='auto', cmap='viridis')
+    fig.colorbar(im, ax=ax, label='corr^2')
+    ax.set_title(title)
+    ax.set_xlabel('Delay')
+    ax.set_ylabel('Seed index')
+    fig.tight_layout()
+
+    paths = []
+    for ext in ('png', 'pdf'):
+        p = out_dir / f'{run_id}_stm_delay_heatmap.{ext}'
+        dpi = _DPI_EXPORT if ext == 'pdf' else _DPI_SCREEN
+        fig.savefig(p, dpi=dpi)
+        paths.append(p)
+    plt.close(fig)
+    return paths
+
+
+def plot_runtime_breakdown(
+    stage_times: Dict[str, float],
+    run_id: str,
+    out_dir: Path,
+    title: str = 'Runtime Breakdown',
+) -> List[Path]:
+    """Plot stage-wise runtime bar chart."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stages = list(stage_times.keys())
+    values = [stage_times[s] for s in stages]
+
+    fig, ax = plt.subplots(figsize=_FIGURE_SIZE_SINGLE)
+    bars = ax.bar(stages, values, color=_COLORS[1], alpha=0.85)
+    ax.bar_label(bars, fmt='%.2fs', padding=2)
+    ax.set_title(title)
+    ax.set_ylabel('Seconds')
+    ax.set_xlabel('Stage')
+    ax.tick_params(axis='x', rotation=25)
+    fig.tight_layout()
+
+    paths = []
+    for ext in ('png', 'pdf'):
+        p = out_dir / f'{run_id}_runtime_breakdown.{ext}'
+        dpi = _DPI_EXPORT if ext == 'pdf' else _DPI_SCREEN
+        fig.savefig(p, dpi=dpi)
+        paths.append(p)
+    plt.close(fig)
+    return paths
+
+
+def plot_gate_decision_tree(
+    gate_results: Dict[str, str],
+    run_id: str,
+    out_dir: Path,
+    title: str = 'Gate Decision Tree',
+) -> List[Path]:
+    """Render a simple gate-decision flow summary chart."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    gates = list(gate_results.keys())
+    verdicts = [gate_results[g] for g in gates]
+    score = [
+        1 if v == 'PASS' else (0 if v == 'INSUFFICIENT_EVIDENCE' else -1)
+        for v in verdicts
+    ]
+    colors = ['#2e7d32' if s > 0 else ('#f9a825' if s == 0 else '#c62828') for s in score]
+
+    fig, ax = plt.subplots(figsize=_FIGURE_SIZE_DUAL)
+    ax.bar(gates, score, color=colors, alpha=0.9)
+    ax.set_yticks([-1, 0, 1])
+    ax.set_yticklabels(['FAIL', 'INSUFFICIENT', 'PASS'])
+    ax.set_title(title)
+    ax.set_xlabel('Gate')
+    ax.set_ylabel('Verdict')
+    fig.tight_layout()
+
+    paths = []
+    for ext in ('png', 'pdf'):
+        p = out_dir / f'{run_id}_gate_tree.{ext}'
+        dpi = _DPI_EXPORT if ext == 'pdf' else _DPI_SCREEN
+        fig.savefig(p, dpi=dpi)
+        paths.append(p)
+    plt.close(fig)
+    return paths
+
+
+def plot_metric_correlation_matrix(
+    metrics: Dict[str, np.ndarray],
+    run_id: str,
+    out_dir: Path,
+    title: str = 'Metric Correlation Matrix',
+) -> List[Path]:
+    """Plot correlation matrix for named metric series."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    names = list(metrics.keys())
+    if len(names) < 2:
+        raise ValueError('Need at least 2 metrics for correlation matrix')
+
+    mat = np.vstack([metrics[n] for n in names])
+    corr = np.corrcoef(mat)
+
+    fig, ax = plt.subplots(figsize=_FIGURE_SIZE_SINGLE)
+    im = ax.imshow(corr, cmap='coolwarm', vmin=-1.0, vmax=1.0)
+    fig.colorbar(im, ax=ax, label='Pearson r')
+    ax.set_xticks(np.arange(len(names)))
+    ax.set_xticklabels(names, rotation=30, ha='right')
+    ax.set_yticks(np.arange(len(names)))
+    ax.set_yticklabels(names)
+    ax.set_title(title)
+    fig.tight_layout()
+
+    paths = []
+    for ext in ('png', 'pdf'):
+        p = out_dir / f'{run_id}_metric_corr.{ext}'
+        dpi = _DPI_EXPORT if ext == 'pdf' else _DPI_SCREEN
+        fig.savefig(p, dpi=dpi)
+        paths.append(p)
+    plt.close(fig)
+    return paths

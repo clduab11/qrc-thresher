@@ -29,6 +29,53 @@ dependencies = [
 [project.scripts]
 qrc-thresher = "qrc_thresher.cli:main"
 
+[project.entry-points."qrc_thresher.tasks"]
+stm = "qrc_thresher.tasks.stm:generate_stm"
+parity = "qrc_thresher.tasks.temporal_parity:generate_parity"
+narma = "qrc_thresher.tasks.narma10:generate_narma10"
+
+[project.entry-points."qrc_thresher.reservoirs"]
+pennylane = "qrc_thresher.reservoirs.pennylane_qrc:extract_features"
+stateful = "qrc_thresher.reservoirs.stateful_qrc:extract_features_stateful"
+
+[project.entry-points."qrc_thresher.baselines"]
+esn_grid_search = "qrc_thresher.baselines.esn:grid_search_esn"
+esn_predict = "qrc_thresher.baselines.esn:train_predict_esn"
+random_features_train = "qrc_thresher.baselines.random_features:train_rks"
+
+[project.entry-points."qrc_thresher.gates"]
+G0 = "qrc_thresher.commands.gate:_evaluate_gate_g0"
+G0_5 = "qrc_thresher.commands.gate:_evaluate_gate_g05"
+G1 = "qrc_thresher.commands.gate:_evaluate_gate_g1"
+G2 = "qrc_thresher.commands.gate:_evaluate_gate_g2"
+G2_5 = "qrc_thresher.commands.gate:_evaluate_gate_g25"
+G3 = "qrc_thresher.commands.gate:_evaluate_gate_g3"
+G4 = "qrc_thresher.commands.gate:_evaluate_gate_g4"
+G5 = "qrc_thresher.commands.gate:_evaluate_gate_g5"
+G6 = "qrc_thresher.commands.gate:_evaluate_gate_g6"
+G7 = "qrc_thresher.commands.gate:_evaluate_gate_g7"
+
+[project.entry-points."qrc_thresher.viz"]
+stm_mc = "qrc_thresher.viz.plots:plot_stm_mc"
+comparison = "qrc_thresher.viz.plots:plot_comparison"
+stm_delay_heatmap = "qrc_thresher.viz.plots:plot_stm_delay_heatmap"
+runtime_breakdown = "qrc_thresher.viz.plots:plot_runtime_breakdown"
+gate_decision_tree = "qrc_thresher.viz.plots:plot_gate_decision_tree"
+metric_correlation = "qrc_thresher.viz.plots:plot_metric_correlation_matrix"
+
+[project.entry-points."qrc_thresher.noise_models"]
+depolarizing = "qrc_thresher.reservoirs.noise_models:build_depolarizing_noise_model"
+relaxation = "qrc_thresher.reservoirs.noise_models:build_relaxation_noise_model"
+
+[project.optional-dependencies]
+docs = [
+    "sphinx>=7.2",
+]
+observability = [
+    "opentelemetry-api>=1.25",
+    "opentelemetry-sdk>=1.25",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -31,6 +31,29 @@ class NARMA10Dataset:
     train_end: int
 
 
+def verify_narma10_recurrence(u: np.ndarray, y: np.ndarray) -> bool:
+    """Verify that y satisfies the NARMA-10 recurrence relation.
+
+    Args:
+        u: Input array of shape (T,).
+        y: Output array of shape (T + 1,).
+
+    Returns:
+        True if recurrence relation holds for all valid indices.
+    """
+    for t in range(_NARMA_ORDER, len(u)):
+        y_sum = np.sum(y[t - _NARMA_ORDER + 1 : t + 1])
+        expected = (
+            _NARMA_A * y[t]
+            + _NARMA_B * y[t] * y_sum
+            + _NARMA_C * u[t - _NARMA_ORDER + 1] * u[t]
+            + _NARMA_D
+        )
+        if not np.isclose(y[t + 1], expected, rtol=1e-10, atol=1e-12):
+            return False
+    return True
+
+
 def generate_narma10(
     length: int,
     train_frac: float,
@@ -61,6 +84,8 @@ def generate_narma10(
             + _NARMA_C * u[t - _NARMA_ORDER + 1] * u[t]
             + _NARMA_D
         )
+    if not verify_narma10_recurrence(u, y):
+        raise ValueError('NARMA-10 recurrence relation verification failed')
     targets = y[1:]
     train_end = int(length * train_frac)
     logger.debug('Generated NARMA-10: length=%d, train_end=%d', length, train_end)

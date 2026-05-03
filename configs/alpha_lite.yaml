@@ -26,7 +26,14 @@ training:
 proof:
   log_entanglement: true
   log_circuit_hash: true
+  log_artifacts: false
 seeds:
   task_seed: 42
   reservoir_seed: 137
   n_seeds: 3
+gates:
+  G1_stm_mc_threshold: 1.0
+  G1_margin_pct: 0.20
+  G2_accuracy_threshold: 0.70
+  G2_random_features_max: 0.60
+  G25_effect_se: 1.0
