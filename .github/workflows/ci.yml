@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-test-health:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Lint (ruff)
+        run: ruff check src tests
+
+      - name: Unit tests (pytest, fast)
+        run: pytest -q
+
+      - name: Health check (G0 source/benchmark health)
+        # Informational until reservoirpy 0.4 compatibility patch lands.
+        # G0 surfaces failures via exit code; CI will not block on that yet.
+        continue-on-error: true
+        run: qrc-thresher health --out-dir results/health
+
+      - name: Minimal gate profile (G0 must eventually pass)
+        # Same rationale: kill-gate is wired up and exits non-zero on FAIL,
+        # but is informational here while baseline dep issues are addressed.
+        continue-on-error: true
+        run: qrc-thresher gate G0

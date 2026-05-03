@@ -1,0 +1,32 @@
+experiment_name: alpha_lite_phase1
+task:
+  name: stm
+  length: 500
+  train_frac: 0.7
+  delay_max: 20
+  parity_window: 3
+reservoir:
+  backend: default.qubit
+  n_qubits: 4
+  depth: 3
+  readout: z_only
+baseline:
+  enabled:
+    - esn
+    - random_features
+  esn_grid:
+    spectral_radius: [0.8, 0.9, 0.95, 0.99, 1.0]
+    input_scaling: [0.1, 0.5, 1.0]
+    leak_rate: [0.1, 0.3, 0.5, 1.0]
+    ridge_alpha: [1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2, 1.0]
+  rks_dim: null
+training:
+  ridge_alphas: [1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2, 1.0, 100.0]
+  cv_folds: 5
+proof:
+  log_entanglement: true
+  log_circuit_hash: true
+seeds:
+  task_seed: 42
+  reservoir_seed: 137
+  n_seeds: 3

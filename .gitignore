@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Run artifacts (results live outside version control; .gitkeep preserves dir)
+results/*
+!results/.gitkeep
