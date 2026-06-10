@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -387,7 +388,7 @@ class TestG7:
         cal_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             'backend': 'ibm_fake',
-            'timestamp_utc': '2026-05-01T00:00:00+00:00',
+            'timestamp_utc': (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
             't1': 45000,
             't2': 60000,
             'readout_error': 0.02,
