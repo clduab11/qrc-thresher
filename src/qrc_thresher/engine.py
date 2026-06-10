@@ -345,7 +345,7 @@ class ParallelRunner:
 
         Args:
             manifest: RunManifest to write
-            filelock_module: filelock module or None if not available
+            filelock_module: filelock module (strictly required)
         """
         lock_path = str(_RUNS_LOCK)
         with filelock_module.FileLock(lock_path, timeout=30):
