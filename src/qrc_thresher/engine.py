@@ -13,6 +13,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+try:
+    import filelock
+except ImportError:
+    raise RuntimeError(
+        "The 'filelock' package is required for safe CSV writes. "
+        "Please install it (e.g., 'pip install filelock')."
+    )
+
 from qrc_thresher.config import AlphaLiteConfig
 from qrc_thresher.metrics.runtime import StageTimer
 from qrc_thresher.proof.run_manifest import (
@@ -282,17 +290,8 @@ class ParallelRunner:
             for item in work_items:
                 manifest = _run_single_seed(item)
                 manifests.append(manifest)
-                self._write_manifest(manifest)
+                self._write_manifest_safe(manifest, filelock)
         else:
-            try:
-                import filelock
-            except ImportError:
-                logger.warning(
-                    'filelock not installed, using unsafe CSV writes. '
-                    'Install with: pip install filelock'
-                )
-                filelock = None
-
             with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
                     executor.submit(_run_single_seed, item): item[0]
@@ -346,11 +345,8 @@ class ParallelRunner:
 
         Args:
             manifest: RunManifest to write
-            filelock_module: filelock module or None if not available
+            filelock_module: filelock module (strictly required)
         """
-        if filelock_module is not None:
-            lock_path = str(_RUNS_LOCK)
-            with filelock_module.FileLock(lock_path, timeout=30):
-                append_to_csv(manifest, _RUNS_CSV)
-        else:
-            self._write_manifest(manifest)
+        lock_path = str(_RUNS_LOCK)
+        with filelock_module.FileLock(lock_path, timeout=30):
+            append_to_csv(manifest, _RUNS_CSV)
