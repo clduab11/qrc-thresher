@@ -20,26 +20,23 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Cache uv packages
-        uses: actions/cache@v4
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
         with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
-
-      - name: Install uv
-        run: pip install uv
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies from lock
-        run: uv pip sync uv.lock
+        run: uv sync --locked
 
       - name: Lint (ruff)
-        run: ruff check src tests
+        run: uv run ruff check src tests
 
       - name: Unit tests (pytest, fast)
-        run: pytest -q
+        run: uv run pytest -q
 
       - name: Health check (G0 source/benchmark health)
-        run: qrc-thresher health --out-dir results/health
+        run: uv run qrc-thresher health --out-dir results/health
 
       - name: Minimal gate profile (G0 must eventually pass)
-        run: qrc-thresher gate G0
+        run: uv run qrc-thresher gate G0
