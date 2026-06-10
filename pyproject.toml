@@ -9,6 +9,7 @@ description = "Falsification-first benchmark harness for quantum reservoir compu
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
 dependencies = [
+    "filelock>=3.13",
     "pennylane>=0.44,<0.45",
     "pennylane-lightning",
     "qiskit[all]>=2.3,<3",
