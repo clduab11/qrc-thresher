@@ -75,7 +75,6 @@ def grid_search_esn(
     from reservoirpy.nodes import Reservoir, Ridge
 
     rpy.set_seed(int(rng.integers(0, 2**31)))
-    rpy.verbosity(0)
 
     spectral_radii = grid.get('spectral_radius', [0.9])
     input_scalings = grid.get('input_scaling', [0.5])
@@ -171,7 +170,6 @@ def train_predict_esn(
     from reservoirpy.nodes import Reservoir, Ridge
 
     rpy.set_seed(int(rng.integers(0, 2**31)))
-    rpy.verbosity(0)
 
     reservoir = Reservoir(
         units=n_features,
