@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TaskConfig(BaseModel):
@@ -24,12 +24,26 @@ class TaskConfig(BaseModel):
 
 
 class ReservoirConfig(BaseModel):
-    """Quantum reservoir configuration."""
+    """Quantum reservoir configuration.
+
+    ``window`` is the input window w of design (a) (docs/DECISIONS.md D003, D010): qubit j
+    re-uploads u_{t-(j mod w)} at every layer. w = 1 is today's memoryless circuit. A window
+    outside 1..n_qubits is refused.
+    """
 
     backend: Literal['default.qubit', 'lightning.qubit']
     n_qubits: int = Field(ge=2, le=12)
     depth: int = Field(ge=1, le=10)
     readout: Literal['z_only', 'z_and_zz'] = 'z_only'
+    window: int = Field(default=1, ge=1)
+
+    @model_validator(mode='after')
+    def _window_fits_the_register(self) -> 'ReservoirConfig':
+        if self.window > self.n_qubits:
+            raise ValueError(
+                f'reservoir.window must be in 1..n_qubits = 1..{self.n_qubits}; got {self.window}'
+            )
+        return self
 
 
 class ESNGridConfig(BaseModel):

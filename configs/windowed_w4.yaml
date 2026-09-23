@@ -1,4 +1,4 @@
-experiment_name: alpha_lite_phase1
+experiment_name: windowed_w4_phase1
 task:
   name: stm
   length: 500
@@ -10,7 +10,7 @@ reservoir:
   n_qubits: 4
   depth: 3
   readout: z_only
-  window: 1  # input window w of design (a); w = 1 is the memoryless negative control (D010)
+  window: 4  # input window w of design (a); differs from alpha_lite.yaml only here (D010)
 measurement:
   model: exact  # exact expectation values = oracle upper bound (docs/DECISIONS.md D004)
 baseline:
