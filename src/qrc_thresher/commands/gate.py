@@ -11,8 +11,14 @@ from typing import Optional
 import numpy as np
 
 
-def gate_handler(name: str, model: str = 'pennylane_qrc') -> int:
-    """Handle gate command. Returns exit code. ``model`` is used by G0.7 only."""
+def gate_handler(
+    name: str, model: str = 'pennylane_qrc', config_path: str = 'configs/alpha_lite.yaml'
+) -> int:
+    """Handle gate command. Returns exit code.
+
+    ``config_path`` is the experiment config (default: the cwd-relative
+    configs/alpha_lite.yaml); ``model`` is used by G0.7 only.
+    """
     import pandas as pd
 
     from qrc_thresher.config import load_config
@@ -22,7 +28,7 @@ def gate_handler(name: str, model: str = 'pennylane_qrc') -> int:
 
     config = None
     try:
-        config = load_config(Path('configs/alpha_lite.yaml'))
+        config = load_config(Path(config_path))
     except Exception:
         pass
 
@@ -40,7 +46,7 @@ def gate_handler(name: str, model: str = 'pennylane_qrc') -> int:
 
     if name == 'G0.7':
         # G0.7 writes a new timestamped JSON and figure per evaluation (never overwrites).
-        result, evidence, run_ids = _evaluate_gate_g07(model=model)
+        result, evidence, run_ids = _evaluate_gate_g07(config_path=Path(config_path), model=model)
         print(f'Gate {name}: {result}')
         print(f"  {evidence['message']}")
         print(f"  json: {evidence['json']}")
@@ -279,60 +285,71 @@ def _evaluate_gate_g25(successful, config=None) -> tuple[str, dict, list]:
     return 'FAIL', evidence, run_ids
 
 
-def _evaluate_gate_g05() -> tuple[str, dict, list]:
-    """G0.5: PennyLane vs Qiskit cross-check."""
-    from qrc_thresher.reservoirs.pennylane_qrc import (
-        build_reservoir_params,
-        extract_features,
+# G0.5 cases (docs/DECISIONS.md D010): (n_qubits, depth, seed), each at every distinct window
+# in {1, 2, n} and both readouts, over G05_N_STEPS steps that include the zero-padded rows.
+G05_TRIPLES = ((2, 2, 2026), (4, 3, 137), (5, 4, 7))
+G05_N_STEPS = 6
+G05_READOUTS = ('z_only', 'z_and_zz')
+
+
+def _g05_case(n_qubits: int, depth: int, seed: int, window: int, readout: str) -> dict:
+    """One G0.5 case: PennyLane (the production reservoir) against an independent Qiskit build.
+
+    The angles come from build_reservoir_params with default_rng(seed); the inputs are the next
+    G05_N_STEPS draws from that generator, Uniform(-1, 1).
+    """
+    from qrc_thresher.reservoirs import windowed_qrc
+    from qrc_thresher.reservoirs.pennylane_qrc import build_reservoir_params
+    from qrc_thresher.reservoirs.qiskit_crosscheck import qiskit_features, verify_crosscheck
+
+    rng = np.random.default_rng(seed)
+    params = build_reservoir_params(
+        n_qubits=n_qubits, depth=depth, readout=readout, backend='default.qubit', rng=rng
     )
-    from qrc_thresher.reservoirs.qiskit_crosscheck import (
-        qiskit_expectation_values,
-        verify_crosscheck,
+    u = rng.uniform(-1.0, 1.0, size=G05_N_STEPS)
+    reservoir = windowed_qrc.WindowedReservoir(params=params, window=window, reservoir_seed=seed)
+    pennylane_vals = np.asarray(reservoir.features(u), dtype=np.float64)
+    qiskit_vals = np.asarray(
+        qiskit_features(u, params.thetas, params.phis, n_qubits, depth, window, readout),
+        dtype=np.float64,
     )
-
-    evidence: dict = {}
-    run_ids: list = []
-
-    try:
-        rng = np.random.default_rng(2026)
-        n_qubits = 2
-        depth = 2
-
-        params = build_reservoir_params(
-            n_qubits=n_qubits,
-            depth=depth,
-            readout='z_only',
-            backend='default.qubit',
-            rng=rng,
+    if pennylane_vals.shape != qiskit_vals.shape:
+        raise ValueError(
+            f'G0.5 shape mismatch: PennyLane {pennylane_vals.shape}, Qiskit {qiskit_vals.shape}'
         )
+    max_abs_diff = float(np.max(np.abs(pennylane_vals - qiskit_vals)))
+    return {
+        'n_qubits': int(n_qubits),
+        'depth': int(depth),
+        'seed': int(seed),
+        'window': int(window),
+        'readout': str(readout),
+        'n_steps': int(G05_N_STEPS),
+        'n_zero_padded_rows': int(window - 1),
+        'n_features': int(pennylane_vals.shape[1]),
+        'max_abs_diff': max_abs_diff,
+        'passed': bool(verify_crosscheck(pennylane_vals, qiskit_vals)),
+    }
 
-        sample_inputs = rng.uniform(-1, 1, size=5)
-        all_match = True
-        max_diffs = []
 
-        for u_t in sample_inputs:
-            pennylane_vals = extract_features(np.array([u_t]), params).ravel()
-            qiskit_vals = qiskit_expectation_values(
-                u_t,
-                params.thetas,
-                params.phis,
-                n_qubits,
-                depth,
-            )
+def _evaluate_gate_g05() -> tuple[str, dict, list]:
+    """G0.5: PennyLane vs Qiskit cross-check at CROSSCHECK_TOLERANCE, on the D010 cases."""
+    from qrc_thresher.reservoirs.qiskit_crosscheck import CROSSCHECK_TOLERANCE
 
-            diff = np.abs(pennylane_vals - qiskit_vals)
-            max_diffs.append(float(np.max(diff)))
-            if not verify_crosscheck(pennylane_vals, qiskit_vals, tolerance=1e-5):
-                all_match = False
-
-        evidence['max_diffs'] = max_diffs
-        evidence['n_samples'] = len(sample_inputs)
-        evidence['all_match'] = all_match
-
-        if all_match:
-            return 'PASS', evidence, run_ids
-        return 'FAIL', evidence, run_ids
-
+    evidence: dict = {'tolerance': float(CROSSCHECK_TOLERANCE), 'n_steps': int(G05_N_STEPS)}
+    run_ids: list = []
+    try:
+        cases = [
+            _g05_case(n_qubits, depth, seed, window, readout)
+            for n_qubits, depth, seed in G05_TRIPLES
+            for window in sorted({1, 2, n_qubits})
+            for readout in G05_READOUTS
+        ]
+        evidence['cases'] = cases
+        evidence['n_cases'] = len(cases)
+        evidence['max_abs_diff'] = max(c['max_abs_diff'] for c in cases) if cases else None
+        evidence['all_match'] = bool(cases) and all(c['passed'] for c in cases)
+        return ('PASS' if evidence['all_match'] else 'FAIL'), evidence, run_ids
     except Exception as exc:
         evidence['error'] = str(exc)
         return 'FAIL', evidence, run_ids

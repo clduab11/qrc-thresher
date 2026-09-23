@@ -205,24 +205,19 @@ def check_config(cfg: AlphaLiteConfig, protocol: G07Protocol) -> None:
         )
 
 
-def qrc_feature_map(cfg: AlphaLiteConfig) -> FeatureMap:
-    """Feature map of the configured PennyLane reservoir, built as the harness builds it."""
-    from qrc_thresher.reservoirs.pennylane_qrc import build_reservoir_params, extract_features
+def qrc_feature_map(cfg: AlphaLiteConfig, ablation: Optional[str] = None) -> FeatureMap:
+    """Feature map of the configured reservoir (or its matched ablation), built as the harness
+    builds it: through reservoir_from_config, which reads reservoir.window (D010)."""
+    from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
 
     def feature_map(u: np.ndarray, reservoir_seed: int) -> np.ndarray:
-        params = build_reservoir_params(
-            n_qubits=cfg.reservoir.n_qubits,
-            depth=cfg.reservoir.depth,
-            readout=cfg.reservoir.readout,
-            backend=cfg.reservoir.backend,
-            rng=np.random.default_rng(reservoir_seed),
-        )
-        return extract_features(np.asarray(u, dtype=np.float64), params)
+        reservoir = reservoir_from_config(cfg, reservoir_seed, ablation=ablation)
+        return reservoir.features(np.asarray(u, dtype=np.float64))
 
     return feature_map
 
 
-MODELS = ('pennylane_qrc', 'esn_linear', 'esn_nonlinear')
+MODELS = ('pennylane_qrc', 'no_entangle', 'esn_linear', 'esn_nonlinear')
 
 
 def evaluate_config(
@@ -235,8 +230,9 @@ def evaluate_config(
     Args:
         cfg: Experiment config (seed pairs, readout, reservoir size).
         protocol: Registered protocol (default: load_protocol()).
-        model: 'pennylane_qrc' for the configured quantum reservoir, or an ESN preset
-            ('esn_linear', 'esn_nonlinear') with N matched to the QRC feature count.
+        model: 'pennylane_qrc' for the configured quantum reservoir, 'no_entangle' for its
+            matched no-entangle ablation (D010), or an ESN preset ('esn_linear',
+            'esn_nonlinear') with N matched to the QRC feature count.
 
     Raises:
         ValueError: For an unknown model, or a config the protocol refuses.
@@ -245,8 +241,9 @@ def evaluate_config(
         raise ValueError(f'unknown G0.7 model {model!r}; choose from {list(MODELS)}')
     protocol = protocol or load_protocol()
     check_config(cfg, protocol)
-    if model == 'pennylane_qrc':
-        feature_map = qrc_feature_map(cfg)
+    if model in ('pennylane_qrc', 'no_entangle'):
+        ablation = None if model == 'pennylane_qrc' else model
+        feature_map = qrc_feature_map(cfg, ablation=ablation)
         details = {
             'reservoir': 'pennylane_qrc',
             'kind': 'quantum',
@@ -254,6 +251,8 @@ def evaluate_config(
             'n_qubits': cfg.reservoir.n_qubits,
             'depth': cfg.reservoir.depth,
             'readout': cfg.reservoir.readout,
+            'window': cfg.reservoir.window,
+            'ablation': ablation,
         }
     else:
         from qrc_thresher.baselines import esn

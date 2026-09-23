@@ -147,13 +147,20 @@ def baseline_cmd(task: str, config_path: str) -> None:
     ),
 )
 @click.option(
+    '--config',
+    'config_path',
+    default='configs/alpha_lite.yaml',
+    show_default=True,
+    help='Experiment config: seed pairs, reservoir (window included) and readout.',
+)
+@click.option(
     '--model',
     default='pennylane_qrc',
     show_default=True,
-    type=click.Choice(['pennylane_qrc', 'esn_linear', 'esn_nonlinear']),
-    help='Model evaluated by G0.7 (other gates ignore it).',
+    type=click.Choice(['pennylane_qrc', 'no_entangle', 'esn_linear', 'esn_nonlinear']),
+    help='Model evaluated by G0.7 (other gates ignore it); no_entangle is the matched ablation.',
 )
-def gate_cmd(name: str, model: str) -> None:
+def gate_cmd(name: str, config_path: str, model: str) -> None:
     """Evaluate a decision gate from results/runs.csv.
 
     Gates are machine-checkable kill-gates. Exit code:
@@ -167,7 +174,7 @@ def gate_cmd(name: str, model: str) -> None:
     configs/gates/G0.7.v1.yaml) instead writes a new timestamped JSON and
     forgetting-curve figure on every evaluation.
     """
-    sys.exit(gate_handler(name, model=model))
+    sys.exit(gate_handler(name, model=model, config_path=config_path))
 
 
 @cli.command('plot')
