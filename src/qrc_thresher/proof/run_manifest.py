@@ -61,6 +61,42 @@ CSV_FIELDNAMES = [
 ]
 
 
+class RunsCsvSchemaError(ValueError):
+    """An existing runs.csv has a header that differs from CSV_FIELDNAMES."""
+
+
+def check_runs_csv_header(csv_path: Path) -> None:
+    """Refuse to append to a runs.csv whose header differs from CSV_FIELDNAMES.
+
+    A missing or empty file passes: the writer adds the header. Appending under a
+    different header would silently misalign every new row, so this raises instead.
+
+    Args:
+        csv_path: Path to the runs.csv file about to be appended to.
+
+    Raises:
+        RunsCsvSchemaError: If the file's header differs from CSV_FIELDNAMES.
+    """
+    if not csv_path.exists() or csv_path.stat().st_size == 0:
+        return
+    with csv_path.open(newline='') as f:
+        existing = next(csv.reader(f), [])
+    if existing == CSV_FIELDNAMES:
+        return
+    missing = [c for c in CSV_FIELDNAMES if c not in existing]
+    unexpected = [c for c in existing if c not in CSV_FIELDNAMES]
+    raise RunsCsvSchemaError(
+        f'{csv_path} has a different column schema, so no row was appended.\n'
+        f'  existing header ({len(existing)} columns): {", ".join(existing)}\n'
+        f'  expected header (manifest schema {SCHEMA_VERSION}, {len(CSV_FIELDNAMES)} columns): '
+        f'{", ".join(CSV_FIELDNAMES)}\n'
+        f'  missing from the file: {", ".join(missing) or "none"}; '
+        f'not in schema {SCHEMA_VERSION}: {", ".join(unexpected) or "none"}\n'
+        'Move the file aside (for example to runs.old.csv) or migrate it to the expected '
+        'header, then rerun.'
+    )
+
+
 @dataclass
 class RunManifest:
     """Schema v1.1 run manifest."""
@@ -270,8 +306,11 @@ def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
 
     Raises:
         OSError: If file cannot be written.
+        RunsCsvSchemaError: If the file exists with a header that differs from
+            CSV_FIELDNAMES. Nothing is appended in that case.
     """
     csv_path.parent.mkdir(parents=True, exist_ok=True)
+    check_runs_csv_header(csv_path)
     write_header = not csv_path.exists() or csv_path.stat().st_size == 0
 
     row = {

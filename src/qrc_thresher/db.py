@@ -11,7 +11,12 @@ from typing import Optional
 
 import filelock
 
-from qrc_thresher.proof.run_manifest import CSV_FIELDNAMES, RunManifest
+from qrc_thresher.proof.run_manifest import (
+    CSV_FIELDNAMES,
+    RunManifest,
+    RunsCsvSchemaError,
+    check_runs_csv_header,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +90,12 @@ class ExperimentDB:
 
         Args:
             manifest: RunManifest to insert.
+
+        Raises:
+            RunsCsvSchemaError: If results/runs.csv exists with a different header.
+                Checked before the database write, so neither store is changed.
         """
+        check_runs_csv_header(Path('results') / 'runs.csv')
         runtime_seconds = None
         if manifest.runtime_per_stage_seconds:
             runtime_seconds = sum(manifest.runtime_per_stage_seconds.values())
@@ -174,11 +184,14 @@ class ExperimentDB:
         try:
             with filelock.FileLock(str(lock_path), timeout=30):
                 self._write_csv_row(manifest, csv_path)
+        except RunsCsvSchemaError:
+            raise
         except Exception as exc:
             logger.warning("Failed to write CSV row: %s", exc)
 
     def _write_csv_row(self, manifest: RunManifest, csv_path: Path) -> None:
-        """Write a single row to CSV."""
+        """Write a single row to CSV (refusing a mismatched header)."""
+        check_runs_csv_header(csv_path)
         write_header = not csv_path.exists() or csv_path.stat().st_size == 0
 
         row = {

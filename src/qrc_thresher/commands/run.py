@@ -20,6 +20,7 @@ def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
     from qrc_thresher.db import ExperimentDB
     from qrc_thresher.metrics.runtime import StageTimer
     from qrc_thresher.proof.run_manifest import (
+        RunsCsvSchemaError,
         create_manifest,
         update_cumulative_compute,
     )
@@ -238,6 +239,8 @@ def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
         db = ExperimentDB()
         db.insert(manifest)
         db.close()
+    except RunsCsvSchemaError:
+        raise
     except Exception as exc:
         logger.warning('Failed to insert into ExperimentDB: %s', exc)
     total_seconds = sum(timing.values())
