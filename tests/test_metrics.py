@@ -29,12 +29,19 @@ class TestMemoryCapacity:
         mc = memory_capacity(y, y)
         assert abs(mc - 5.0) < 1e-10
 
-    def test_zero_prediction(self) -> None:
+    def test_constant_prediction_raises_instead_of_scoring_zero(self) -> None:
         rng = np.random.default_rng(0)
         y_true = rng.normal(0, 1, size=(100, 5))
         y_pred = np.zeros_like(y_true)
-        mc = memory_capacity(y_pred, y_true)
-        assert mc >= 0.0
+        with pytest.raises(ValueError, match='constant'):
+            memory_capacity(y_pred, y_true)
+
+    def test_nearly_constant_prediction_raises(self) -> None:
+        rng = np.random.default_rng(0)
+        y_true = rng.normal(0, 1, size=(100, 2))
+        y_pred = 1e-14 * rng.normal(0, 1, size=(100, 2))
+        with pytest.raises(ValueError, match='constant'):
+            memory_capacity(y_pred, y_true)
 
     def test_shape_1d(self) -> None:
         rng = np.random.default_rng(0)
@@ -115,15 +122,17 @@ class TestClassificationAccuracy:
 class TestSafeCorrcoef:
     """Tests for _safe_corrcoef helper."""
 
-    def test_constant_a(self) -> None:
+    def test_constant_a_raises(self) -> None:
         a = np.ones(50)
         b = np.arange(50, dtype=float)
-        assert _safe_corrcoef(a, b) == 0.0
+        with pytest.raises(ValueError, match='constant'):
+            _safe_corrcoef(a, b)
 
-    def test_constant_b(self) -> None:
+    def test_constant_b_raises(self) -> None:
         a = np.arange(50, dtype=float)
         b = np.ones(50)
-        assert _safe_corrcoef(a, b) == 0.0
+        with pytest.raises(ValueError, match='constant'):
+            _safe_corrcoef(a, b)
 
     def test_perfect_correlation(self) -> None:
         x = np.arange(50, dtype=float)
