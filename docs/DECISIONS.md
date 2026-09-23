@@ -218,3 +218,73 @@ be a separate decision and a new gate version.
 **Decided by**: PI, on review at checkpoint CP1a (details proposed by the builder).
 
 ---
+
+## 2026-09-23: D009 — ESN baseline: dense wiring, one draw per seed, tuning protocol, run path
+
+**Decision**: The ESN baseline is rebuilt in numpy (`baselines/esn.py`) to fix defects D9, D5
+and D8.
+- Model: the leaky-integrator update x_t = (1 − a) x_{t−1} + a tanh(ρ Ŵ x_{t−1} + s W_in u_t),
+  from x_{−1} = 0, with no bias. N_ESN equals the QRC feature count F (n for `z_only`,
+  n + n(n−1)/2 for `z_and_zz`), never 2^n. Its states are read exactly, at no measurement cost.
+- Wiring (D9): input connectivity 1.0, so every unit sees the input, and a dense recurrent
+  matrix, self-connections included. A draw is refused if its spectral radius is non-finite or
+  at most 1e-8, or if any scaled weight is non-finite or larger than 1e3 in magnitude.
+- One draw per seed (D5): `default_rng(reservoir_seed)` draws Ŵ with i.i.d. N(0, 1) entries,
+  normalised to spectral radius 1, then W_in with i.i.d. Uniform(−1, 1) entries. The
+  hyperparameters (ρ, s, a) rescale that one draw, so a search compares hyperparameters, not
+  draws. A run fails unless the deployed ESN's weight hash equals the validated ESN's.
+- Readout: the harness readout every model uses (RidgeCV over `training.ridge_alphas`, with
+  `training.cv_folds` contiguous inner folds and an intercept). The ridge penalty is no longer an
+  ESN grid entry: `baseline.esn_grid` lists spectral_radius, input_scaling and leak_rate only
+  (5 × 3 × 4 = 60 configurations in `alpha_lite.yaml`).
+- Tuning (D5): the reservoir runs once over the whole input sequence (inputs only). The first
+  `baseline.esn_washout` = 50 rows are dropped from selection, fitting and scoring. The
+  remaining training rows [50, train_end) are split into `cv_folds` contiguous validation
+  blocks. Each block is predicted by the readout fitted on the other blocks and scored with the
+  task's primary metric (STM: MC over the task's delays; NARMA-10: −NRMSE; parity: accuracy).
+  The highest mean score wins, and ties go to the first configuration in grid order. Test rows
+  are never used. The selected ESN's readout is then refitted on [50, train_end).
+- Degeneracy (D9): a correlation-based score (MC) of a column whose standard deviation is at
+  most 1e-12 (`metrics.scoring.DEGENERATE_STD`) raises `DegeneratePredictionError` instead of
+  scoring 0. In a search, a configuration with degenerate predictions or non-finite states is
+  flagged and never selected, and the run fails if every configuration is flagged. Any other
+  error propagates.
+- Health check (D9): G0's ESN smoke check asserts learning. A 4-unit ESN at the `esn_linear`
+  preset, fitted on STM (T = 300, K = 4, 50-row washout, seeds 42/137), must reach a held-out
+  memory of at least 1.0 summed over k = 1..4.
+- Budget (D5): run manifests (schema 1.3) record `n_configs` and `n_validation_evals` on every
+  row: 60 and 300 for the ESN on `alpha_lite.yaml`, 1 and 0 for QRC runs.
+- Run path (D8): `qrc-thresher baseline {stm,narma}` writes one row per seed pair of the config
+  for every enabled baseline that has a run path, in the row contract G3 and G4 already read:
+  task_name `esn` with metric `mc`, and `esn_narma` with metric `nrmse`. It skips
+  `random_features` (RKS joins with its bandwidth fix, D13) and `gru` (a stub, D20), and logs
+  why.
+- G0.7 positive control: two fixed presets are evaluated under G0.7 v1, untuned, with N matched
+  to the QRC feature count: `esn_linear` (ρ = 0.9, s = 0.1, a = 1.0) and `esn_nonlinear`
+  (ρ = 0.9, s = 1.0, a = 1.0). They are fixed because a tuned feature map would need its tuning
+  repeated inside every permutation. Expectation, recorded before any G0.7 evaluation of an ESN:
+  `esn_linear` passes the STM clause on every seed (the referee's probe of 2026-09-22 measured
+  S = 2.6–3.0 at p = 0.005 for a dense-wired 4-unit ESN). No outcome is registered for either
+  preset's parity clause or for the `esn_nonlinear` STM clause; those are reported as findings.
+- ReservoirPy stays only as a test cross-check of the state update.
+
+**Supersedes**: BUILD_SPEC E.6's block CV with a per-fold 200-step warmup from a fresh state
+(ASSUMED-DEFAULT E.A), for the ESN. The states depend on the inputs only, so one run gives the
+validation blocks exactly the states the deployed ESN carries into the test rows. At T = 500 the
+350 training rows also give 70-row folds, shorter than a 200-step warmup. The 50-row washout is
+the one G0.7 v1 registered (D008); it covers the STM delays (K = 20) and the NARMA-10 transient,
+as D16 requires.
+
+**Consequences**: G3 and G4 now have rows to read, but their verdicts are plumbing checks until
+CP4. G3 still needs at least 5 runs per arm and pairs rows by list position (D3). QRC runs still
+train on [0, train_end), zero-padded targets included (D16). The ESN gets a 60-configuration
+search and the QRC none; the manifest shows that difference.
+
+**Rationale**: Dense wiring is what makes a 4-unit ESN a working reservoir. The referee's probe
+measured total MC of 3.6–4.0 with it, and a constant predictor without it. One draw per seed
+and a shared readout make the search compare hyperparameters under the protocol every model
+uses.
+
+**Decided by**: PI, on review at checkpoint CP2 (details proposed by the builder).
+
+---
