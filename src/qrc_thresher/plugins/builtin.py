@@ -45,17 +45,23 @@ def register_builtin_plugins(hub: RegistryHub) -> None:
         'stateful',
         _lazy_plugin('qrc_thresher.reservoirs.stateful_qrc', 'extract_features_stateful'),
     )
+    # The windowed reservoir (design a) and its matched ablations (docs/DECISIONS.md D010).
+    # All four take (u, params, window=1, reservoir_seed=None).
+    hub.reservoirs.register(
+        'windowed',
+        _lazy_plugin('qrc_thresher.reservoirs.windowed_qrc', 'plugin_windowed'),
+    )
     hub.reservoirs.register(
         'phase_random',
-        _lazy_plugin('qrc_thresher.reservoirs.ablations', 'extract_features_phase_random'),
+        _lazy_plugin('qrc_thresher.reservoirs.windowed_qrc', 'plugin_phase_random'),
     )
     hub.reservoirs.register(
         'no_entangle',
-        _lazy_plugin('qrc_thresher.reservoirs.ablations', 'extract_features_no_entangle'),
+        _lazy_plugin('qrc_thresher.reservoirs.windowed_qrc', 'plugin_no_entangle'),
     )
     hub.reservoirs.register(
         'haar',
-        _lazy_plugin('qrc_thresher.reservoirs.ablations', 'extract_features_haar'),
+        _lazy_plugin('qrc_thresher.reservoirs.windowed_qrc', 'plugin_haar'),
     )
 
     # Baselines

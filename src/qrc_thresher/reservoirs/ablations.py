@@ -1,4 +1,9 @@
-"""Ablation variants of the quantum reservoir (Section 7.4).
+"""Legacy, unmatched ablation variants of the quantum reservoir (Section 7.4).
+
+Deprecated (docs/DECISIONS.md D010): these ablations are not matched to the reservoir (defect
+D12). The matched ablations live in reservoirs/windowed_qrc.py, and the builtin plugins
+phase_random, no_entangle and haar point there. Each function here emits a DeprecationWarning;
+the referee deletes this module in CP4.
 
 Implements:
 - Phase-randomized: random phases at each time step (no coherent dynamics).
@@ -9,6 +14,7 @@ Implements:
 from __future__ import annotations
 
 import logging
+import warnings
 
 import numpy as np
 import pennylane as qml
@@ -17,6 +23,15 @@ from numpy.random import Generator
 from qrc_thresher.reservoirs.pennylane_qrc import _ENCODING_SCALE, QRCParams
 
 logger = logging.getLogger(__name__)
+
+
+def _deprecated(name: str) -> None:
+    warnings.warn(
+        f'{name} is deprecated (docs/DECISIONS.md D010): it is not matched to the reservoir. '
+        'Use the matched ablations in qrc_thresher.reservoirs.windowed_qrc.',
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 def extract_features_phase_random(
@@ -37,6 +52,7 @@ def extract_features_phase_random(
     Returns:
         Feature matrix of shape (T, n_qubits).
     """
+    _deprecated('extract_features_phase_random')
     dev = qml.device(params.backend, wires=params.n_qubits)
     T = len(u)
     features = np.zeros((T, params.n_qubits), dtype=np.float64)
@@ -85,6 +101,7 @@ def extract_features_no_entangle(
     Returns:
         Feature matrix of shape (T, n_qubits).
     """
+    _deprecated('extract_features_no_entangle')
     dev = qml.device(params.backend, wires=params.n_qubits)
     T = len(u)
     features = np.zeros((T, params.n_qubits), dtype=np.float64)
@@ -132,6 +149,7 @@ def extract_features_haar(
     Returns:
         Feature matrix of shape (T, n_qubits).
     """
+    _deprecated('extract_features_haar')
     from scipy.stats import unitary_group
 
     # Sample one Haar-random unitary (fixed for the whole sequence)

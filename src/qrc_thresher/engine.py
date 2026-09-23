@@ -64,7 +64,6 @@ def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
     cfg_path = Path(cfg_path_str)
 
     rng_task = np.random.default_rng(task_seed)
-    rng_reservoir = np.random.default_rng(reservoir_seed)
 
     timer = StageTimer()
     circuit_hash = 'n/a'
@@ -78,12 +77,8 @@ def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
     try:
         if task_name == 'stm':
             from qrc_thresher.metrics.scoring import memory_capacity
-            from qrc_thresher.reservoirs.pennylane_qrc import (
-                build_reservoir_params,
-                compute_circuit_hash,
-                extract_features,
-                train_readout,
-            )
+            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
+            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
             from qrc_thresher.tasks.stm import generate_stm
 
             with timer.stage('task_generation'):
@@ -95,17 +90,11 @@ def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
                 )
 
             with timer.stage('reservoir_build'):
-                params = build_reservoir_params(
-                    n_qubits=config.reservoir.n_qubits,
-                    depth=config.reservoir.depth,
-                    readout=config.reservoir.readout,
-                    backend=config.reservoir.backend,
-                    rng=rng_reservoir,
-                )
-                circuit_hash = compute_circuit_hash(params)
+                reservoir = reservoir_from_config(config, reservoir_seed)
+                circuit_hash = reservoir.circuit_hash
 
             with timer.stage('feature_extraction'):
-                X = extract_features(ds.u, params)
+                X = reservoir.features(ds.u)
 
             with timer.stage('readout_training'):
                 model = train_readout(
@@ -123,12 +112,8 @@ def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
 
         elif task_name == 'parity':
             from qrc_thresher.metrics.scoring import classification_accuracy
-            from qrc_thresher.reservoirs.pennylane_qrc import (
-                build_reservoir_params,
-                compute_circuit_hash,
-                extract_features,
-                train_readout,
-            )
+            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
+            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
             from qrc_thresher.tasks.temporal_parity import generate_parity
 
             window = config.task.parity_window or 3
@@ -140,16 +125,10 @@ def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
                     rng=rng_task,
                 )
             with timer.stage('reservoir_build'):
-                params = build_reservoir_params(
-                    n_qubits=config.reservoir.n_qubits,
-                    depth=config.reservoir.depth,
-                    readout=config.reservoir.readout,
-                    backend=config.reservoir.backend,
-                    rng=rng_reservoir,
-                )
-                circuit_hash = compute_circuit_hash(params)
+                reservoir = reservoir_from_config(config, reservoir_seed)
+                circuit_hash = reservoir.circuit_hash
             with timer.stage('feature_extraction'):
-                X = extract_features(ds.u.astype(np.float64), params)
+                X = reservoir.features(ds.u.astype(np.float64))
             with timer.stage('readout_training'):
                 model = train_readout(
                     X[: ds.train_end],
@@ -165,12 +144,8 @@ def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
 
         elif task_name == 'narma':
             from qrc_thresher.metrics.scoring import nrmse
-            from qrc_thresher.reservoirs.pennylane_qrc import (
-                build_reservoir_params,
-                compute_circuit_hash,
-                extract_features,
-                train_readout,
-            )
+            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
+            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
             from qrc_thresher.tasks.narma10 import generate_narma10
 
             with timer.stage('task_generation'):
@@ -180,16 +155,10 @@ def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
                     rng=rng_task,
                 )
             with timer.stage('reservoir_build'):
-                params = build_reservoir_params(
-                    n_qubits=config.reservoir.n_qubits,
-                    depth=config.reservoir.depth,
-                    readout=config.reservoir.readout,
-                    backend=config.reservoir.backend,
-                    rng=rng_reservoir,
-                )
-                circuit_hash = compute_circuit_hash(params)
+                reservoir = reservoir_from_config(config, reservoir_seed)
+                circuit_hash = reservoir.circuit_hash
             with timer.stage('feature_extraction'):
-                X = extract_features(ds.u, params)
+                X = reservoir.features(ds.u)
             with timer.stage('readout_training'):
                 model = train_readout(
                     X[: ds.train_end],

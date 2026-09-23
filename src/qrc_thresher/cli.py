@@ -104,11 +104,20 @@ def run_cmd(task: str, config_path: str, seed: Optional[int], workers: int) -> N
     'name',
     type=click.Choice(['phase_random', 'no_entangle', 'random_features', 'haar']),
 )
-@click.option('--config', 'config_path', default='configs/alpha_lite.yaml')
-@click.option('--seed', default=None, type=int)
-def ablation_cmd(name: str, config_path: str, seed: Optional[int]) -> None:
-    """Run an ablation study."""
-    sys.exit(ablation_handler(name, config_path, seed))
+@click.option(
+    '--config',
+    'config_path',
+    default='configs/alpha_lite.yaml',
+    show_default=True,
+    help='Path to YAML config file.',
+)
+def ablation_cmd(name: str, config_path: str) -> None:
+    """Run a matched ablation on every seed pair of the config (docs/DECISIONS.md D010).
+
+    The ablation inherits the reservoir's seed, readout, window and re-upload schedule; only
+    the tested factor changes. One manifest row is written per seed pair.
+    """
+    sys.exit(ablation_handler(name, config_path))
 
 
 @cli.command('baseline')

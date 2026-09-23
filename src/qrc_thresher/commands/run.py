@@ -43,16 +43,11 @@ def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
 
     try:
         rng_task = np.random.default_rng(task_seed)
-        rng_reservoir = np.random.default_rng(reservoir_seed)
 
         if task == 'stm':
             from qrc_thresher.metrics.scoring import memory_capacity
-            from qrc_thresher.reservoirs.pennylane_qrc import (
-                build_reservoir_params,
-                compute_circuit_hash,
-                extract_features,
-                train_readout,
-            )
+            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
+            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
             from qrc_thresher.tasks.stm import generate_stm
 
             with timer.stage('task_generation'):
@@ -64,17 +59,11 @@ def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
                 )
 
             with timer.stage('reservoir_build'):
-                params = build_reservoir_params(
-                    n_qubits=cfg.reservoir.n_qubits,
-                    depth=cfg.reservoir.depth,
-                    readout=cfg.reservoir.readout,
-                    backend=cfg.reservoir.backend,
-                    rng=rng_reservoir,
-                )
-                circuit_hash = compute_circuit_hash(params)
+                reservoir = reservoir_from_config(cfg, reservoir_seed)
+                circuit_hash = reservoir.circuit_hash
 
             with timer.stage('feature_extraction'):
-                X = extract_features(ds.u, params)
+                X = reservoir.features(ds.u)
 
             if cfg.proof.log_artifacts:
                 features_path = _save_features(X, run_id)
@@ -103,12 +92,8 @@ def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
 
         elif task == 'parity':
             from qrc_thresher.metrics.scoring import classification_accuracy
-            from qrc_thresher.reservoirs.pennylane_qrc import (
-                build_reservoir_params,
-                compute_circuit_hash,
-                extract_features,
-                train_readout,
-            )
+            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
+            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
             from qrc_thresher.tasks.temporal_parity import generate_parity
 
             window = cfg.task.parity_window or 3
@@ -120,16 +105,10 @@ def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
                     rng=rng_task,
                 )
             with timer.stage('reservoir_build'):
-                params = build_reservoir_params(
-                    n_qubits=cfg.reservoir.n_qubits,
-                    depth=cfg.reservoir.depth,
-                    readout=cfg.reservoir.readout,
-                    backend=cfg.reservoir.backend,
-                    rng=rng_reservoir,
-                )
-                circuit_hash = compute_circuit_hash(params)
+                reservoir = reservoir_from_config(cfg, reservoir_seed)
+                circuit_hash = reservoir.circuit_hash
             with timer.stage('feature_extraction'):
-                X = extract_features(ds.u.astype(np.float64), params)
+                X = reservoir.features(ds.u.astype(np.float64))
 
             if cfg.proof.log_artifacts:
                 features_path = _save_features(X, run_id)
@@ -158,12 +137,8 @@ def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
 
         else:  # narma
             from qrc_thresher.metrics.scoring import nrmse
-            from qrc_thresher.reservoirs.pennylane_qrc import (
-                build_reservoir_params,
-                compute_circuit_hash,
-                extract_features,
-                train_readout,
-            )
+            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
+            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
             from qrc_thresher.tasks.narma10 import generate_narma10
 
             with timer.stage('task_generation'):
@@ -173,16 +148,10 @@ def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
                     rng=rng_task,
                 )
             with timer.stage('reservoir_build'):
-                params = build_reservoir_params(
-                    n_qubits=cfg.reservoir.n_qubits,
-                    depth=cfg.reservoir.depth,
-                    readout=cfg.reservoir.readout,
-                    backend=cfg.reservoir.backend,
-                    rng=rng_reservoir,
-                )
-                circuit_hash = compute_circuit_hash(params)
+                reservoir = reservoir_from_config(cfg, reservoir_seed)
+                circuit_hash = reservoir.circuit_hash
             with timer.stage('feature_extraction'):
-                X = extract_features(ds.u, params)
+                X = reservoir.features(ds.u)
 
             if cfg.proof.log_artifacts:
                 features_path = _save_features(X, run_id)
