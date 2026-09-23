@@ -1,6 +1,7 @@
 """Command handlers for qrc_thresher CLI."""
 
 from qrc_thresher.commands.ablation import ablation_handler
+from qrc_thresher.commands.baseline import baseline_handler
 from qrc_thresher.commands.gate import gate_handler
 from qrc_thresher.commands.health import health_handler
 from qrc_thresher.commands.noise import noise_sweep_handler
@@ -14,6 +15,7 @@ __all__ = [
     'health_handler',
     'run_handler',
     'ablation_handler',
+    'baseline_handler',
     'gate_handler',
     'plugins_handler',
     'perf_handler',

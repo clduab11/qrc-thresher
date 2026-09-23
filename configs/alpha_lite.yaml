@@ -20,7 +20,7 @@ baseline:
     spectral_radius: [0.8, 0.9, 0.95, 0.99, 1.0]
     input_scaling: [0.1, 0.5, 1.0]
     leak_rate: [0.1, 0.3, 0.5, 1.0]
-    ridge_alpha: [1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2, 1.0]
+  esn_washout: 50  # leading rows dropped from ESN selection, training and scoring (D009)
   rks_dim: null
 training:
   ridge_alphas: [1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2, 1.0, 100.0]

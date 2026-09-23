@@ -4,6 +4,7 @@ Commands:
   health   - Run all health checks.
   run      - Run a task benchmark.
   ablation - Run an ablation study.
+  baseline - Run the enabled classical baselines on every seed pair.
   gate     - Evaluate a decision gate.
   plugins  - List registered plugins.
   perf     - Run lightweight performance benchmarks.
@@ -22,6 +23,7 @@ import click
 
 from qrc_thresher.commands import (
     ablation_handler,
+    baseline_handler,
     gate_handler,
     health_handler,
     noise_sweep_handler,
@@ -109,6 +111,25 @@ def ablation_cmd(name: str, config_path: str, seed: Optional[int]) -> None:
     sys.exit(ablation_handler(name, config_path, seed))
 
 
+@cli.command('baseline')
+@click.argument('task', type=click.Choice(['stm', 'narma']))
+@click.option(
+    '--config',
+    'config_path',
+    default='configs/alpha_lite.yaml',
+    show_default=True,
+    help='Path to YAML config file.',
+)
+def baseline_cmd(task: str, config_path: str) -> None:
+    """Run the enabled classical baselines on every seed pair and write manifest rows.
+
+    STM rows are written as task_name 'esn' (metric 'mc'); NARMA-10 rows as 'esn_narma'
+    (metric 'nrmse'). Each row records the search budget. Exit 0 only if every run
+    succeeded.
+    """
+    sys.exit(baseline_handler(task, config_path))
+
+
 @cli.command('gate')
 @click.argument(
     'name',
@@ -116,7 +137,14 @@ def ablation_cmd(name: str, config_path: str, seed: Optional[int]) -> None:
         ['G0', 'G0.5', 'G0.7', 'G1', 'G2', 'G2.5', 'G3', 'G4', 'G5', 'G6', 'G7']
     ),
 )
-def gate_cmd(name: str) -> None:
+@click.option(
+    '--model',
+    default='pennylane_qrc',
+    show_default=True,
+    type=click.Choice(['pennylane_qrc', 'esn_linear', 'esn_nonlinear']),
+    help='Model evaluated by G0.7 (other gates ignore it).',
+)
+def gate_cmd(name: str, model: str) -> None:
     """Evaluate a decision gate from results/runs.csv.
 
     Gates are machine-checkable kill-gates. Exit code:
@@ -130,7 +158,7 @@ def gate_cmd(name: str) -> None:
     configs/gates/G0.7.v1.yaml) instead writes a new timestamped JSON and
     forgetting-curve figure on every evaluation.
     """
-    sys.exit(gate_handler(name))
+    sys.exit(gate_handler(name, model=model))
 
 
 @cli.command('plot')

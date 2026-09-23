@@ -170,7 +170,8 @@ def train_readout(
     Returns:
         Fitted RidgeCV model.
     """
-    model = RidgeCV(alphas=ridge_alphas, cv=cv_folds)
-    model.fit(X_train, y_train)
+    from qrc_thresher.readout import fit_ridge_cv
+
+    model = fit_ridge_cv(X_train, y_train, ridge_alphas, cv_folds)
     logger.debug('RidgeCV fitted: best_alpha=%s', getattr(model, 'alpha_', None))
     return model

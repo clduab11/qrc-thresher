@@ -18,7 +18,26 @@ from typing import Sequence
 
 import numpy as np
 from scipy import linalg
+from sklearn.linear_model import RidgeCV
 from sklearn.model_selection import KFold
+
+
+def fit_ridge_cv(
+    X: np.ndarray, y: np.ndarray, alphas: Sequence[float], cv_folds: int
+) -> RidgeCV:
+    """The harness readout, shared by every model: RidgeCV over alphas, contiguous folds.
+
+    Args:
+        X: Features, shape (n_samples, n_features).
+        y: Targets, shape (n_samples,) or (n_samples, n_targets); all targets share one
+            penalty.
+        alphas: Candidate penalties (training.ridge_alphas).
+        cv_folds: Number of contiguous (unshuffled) KFold splits (training.cv_folds).
+
+    Returns:
+        The fitted RidgeCV model.
+    """
+    return RidgeCV(alphas=list(alphas), cv=cv_folds).fit(X, y)
 
 
 @dataclass(frozen=True)

@@ -229,6 +229,8 @@ def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
         primary_metric_name=primary_metric_name,
         primary_metric_value=primary_metric_value,
         measurement_model=config.measurement.model,
+        n_configs=1,
+        n_validation_evals=0,
     )
 
     return manifest

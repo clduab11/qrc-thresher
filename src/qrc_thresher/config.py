@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TaskConfig(BaseModel):
@@ -32,11 +32,23 @@ class ReservoirConfig(BaseModel):
     readout: Literal['z_only', 'z_and_zz'] = 'z_only'
 
 
+class ESNGridConfig(BaseModel):
+    """ESN hyperparameter grid. The readout penalty is not part of it: every model uses
+    the harness readout over training.ridge_alphas (docs/DECISIONS.md D009)."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    spectral_radius: List[float] = Field(min_length=1)
+    input_scaling: List[float] = Field(min_length=1)
+    leak_rate: List[float] = Field(min_length=1)
+
+
 class BaselineConfig(BaseModel):
     """Classical baseline configuration."""
 
     enabled: List[Literal['esn', 'random_features', 'gru']]
-    esn_grid: Optional[Dict[str, List[float]]] = None
+    esn_grid: Optional[ESNGridConfig] = None
+    esn_washout: int = Field(default=50, ge=0)
     rks_dim: Optional[int] = None
 
 

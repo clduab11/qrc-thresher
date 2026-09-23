@@ -11,6 +11,15 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# A prediction or target whose standard deviation is at or below this is treated as
+# constant: its correlation is undefined, so it is refused rather than scored as 0.
+# Same value as the degeneracy tolerance registered for G0.7 v1 (docs/DECISIONS.md D009).
+DEGENERATE_STD = 1e-12
+
+
+class DegeneratePredictionError(ValueError):
+    """A correlation-based metric was asked to score a constant series."""
+
 
 def memory_capacity(
     y_pred: np.ndarray,
@@ -29,6 +38,8 @@ def memory_capacity(
 
     Raises:
         ValueError: If inputs contain non-finite values.
+        DegeneratePredictionError: If any prediction or target column is constant
+            (std <= DEGENERATE_STD). A constant prediction is never scored as 0.
     """
     _check_finite(y_pred, 'y_pred')
     _check_finite(y_true, 'y_true')
@@ -111,16 +122,26 @@ def _check_finite(arr: np.ndarray, name: str) -> None:
 
 
 def _safe_corrcoef(a: np.ndarray, b: np.ndarray) -> float:
-    """Compute Pearson correlation coefficient, returning 0 for constant arrays.
+    """Compute the Pearson correlation coefficient, refusing constant arrays.
+
+    A constant prediction carries no information, and its correlation is undefined.
+    Scoring it as 0 would hide a dead model, so it raises instead (defect D9).
 
     Args:
         a: Array 1.
         b: Array 2.
 
     Returns:
-        Pearson r in [-1, 1], or 0.0 if either array is constant.
+        Pearson r in [-1, 1].
+
+    Raises:
+        DegeneratePredictionError: If either array has std <= DEGENERATE_STD.
     """
-    if np.std(a) == 0.0 or np.std(b) == 0.0:
-        return 0.0
+    std_a, std_b = float(np.std(a)), float(np.std(b))
+    if std_a <= DEGENERATE_STD or std_b <= DEGENERATE_STD:
+        raise DegeneratePredictionError(
+            f'constant input to a correlation (std {std_a:.3g} and {std_b:.3g}, '
+            f'tolerance {DEGENERATE_STD:g}): the score is undefined, not 0'
+        )
     corr_matrix = np.corrcoef(a, b)
     return float(corr_matrix[0, 1])

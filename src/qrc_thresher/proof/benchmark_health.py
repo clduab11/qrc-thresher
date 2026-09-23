@@ -9,13 +9,16 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path('configs') / 'alpha_lite.yaml'
+# The ESN smoke check passes only if held-out memory over delays k = 1..4 reaches this
+# (docs/DECISIONS.md D009). A memoryless or disconnected model cannot.
+_ESN_SMOKE_MIN_MEMORY = 1.0
 
 
 def check_config() -> Dict[str, Any]:
@@ -77,42 +80,34 @@ def check_qrc_smoke() -> Dict[str, Any]:
         return {'status': f'FAIL: {exc}'}
 
 
-def check_esn_smoke() -> Dict[str, Any]:
-    """Check ESN baseline trains and predicts on a small STM dataset."""
+def check_esn_smoke(params: Optional[Any] = None) -> Dict[str, Any]:
+    """Check the ESN baseline learns, not just that it returns an array.
+
+    A 4-unit ESN (the linear preset unless ``params`` is given) is fitted with the harness
+    readout on a small STM task (T = 300, K = 4, 50-row washout). PASS requires a summed
+    held-out memory capacity over delays k = 1..4 of at least _ESN_SMOKE_MIN_MEMORY. A
+    disconnected ESN fails: its predictions are constant and cannot be scored.
+    """
     try:
-        from qrc_thresher.baselines.esn import grid_search_esn, train_predict_esn
+        from qrc_thresher.baselines.esn import ESN_PRESETS, draw_reservoir, fit_predict_esn
+        from qrc_thresher.config import load_config
+        from qrc_thresher.metrics.scoring import memory_capacity
         from qrc_thresher.tasks.stm import generate_stm
 
-        rng = np.random.default_rng(42)
-        ds = generate_stm(length=100, delay_max=3, train_frac=0.7, rng=rng)
-        u_train = ds.u[: ds.train_end]
-        y_train = ds.targets[: ds.train_end, 1]  # delay=1 target
-
-        grid = {
-            'spectral_radius': [0.9],
-            'input_scaling': [0.5],
-            'leak_rate': [0.3],
-        }
-        result = grid_search_esn(
-            u_train,
-            y_train,
-            grid=grid,
-            n_features=4,
-            cv_folds=2,
-            ridge_alphas=[1e-4, 1e-2],
-            rng=np.random.default_rng(0),
+        params = params or ESN_PRESETS['esn_linear']
+        cfg = load_config(_CONFIG_PATH)
+        ds = generate_stm(length=300, delay_max=4, train_frac=0.7, rng=np.random.default_rng(42))
+        pred, esn, _ = fit_predict_esn(
+            ds.u, ds.targets, ds.train_end, draw_reservoir(4, 137), params, 50,
+            cfg.training.ridge_alphas, cfg.training.cv_folds,
         )
-        preds = train_predict_esn(
-            u_train,
-            y_train,
-            ds.u[ds.train_end :],
-            result,
-            n_features=4,
-            rng=np.random.default_rng(0),
-        )
+        memory = float(memory_capacity(pred[:, 1:], ds.targets[ds.train_end:, 1:]))
+        learned = memory >= _ESN_SMOKE_MIN_MEMORY
         return {
-            'status': 'PASS',
-            'pred_shape': list(preds.shape),
+            'status': 'PASS' if learned else 'FAIL',
+            'memory_k1_to_4': memory,
+            'threshold': _ESN_SMOKE_MIN_MEMORY,
+            'weight_hash': esn.weight_hash(),
         }
     except Exception as exc:
         return {'status': f'FAIL: {exc}'}
@@ -183,12 +178,11 @@ def check_reproducibility() -> Dict[str, Any]:
         def run_once(seed: int) -> float:
             rng = np.random.default_rng(seed)
             ds = generate_stm(length=100, delay_max=3, train_frac=0.7, rng=rng)
-            # Trivial "predictor": predict mean
-            y_pred = np.tile(
-                np.mean(ds.targets[: ds.train_end], axis=0), (100 - ds.train_end, 1)
-            )
+            # Deterministic, non-constant "predictor": the targets plus seeded noise.
+            # (A constant predictor can no longer be scored: defect D9.)
             y_true = ds.targets[ds.train_end :]
-            return memory_capacity(y_pred, y_true)
+            noise = np.random.default_rng(seed + 1).normal(0.0, 0.5, size=y_true.shape)
+            return memory_capacity(y_true + noise, y_true)
 
         mc1 = run_once(42)
         mc2 = run_once(42)

@@ -348,10 +348,14 @@ def plot_forgetting_curve(result: dict):
              fontsize=_FONT_BASE + 1, weight='bold', ha='left', va='top')
     fig.text(0.055, 0.915, result.get('message', ''), fontsize=_FONT_NOTE, ha='left', va='top')
     level = stm['significance_level']
+    if (result.get('model_details') or {}).get('kind') == 'classical':
+        measured = 'The model is classical: its states are read exactly, at no measurement cost.'
+    else:
+        measured = ('Every value here assumes exact expectation values, an upper bound on what '
+                    'a device could measure.')
     fig.text(
         0.055, 0.03,
-        f"Measurement: {result.get('measurement_label', '')}. Every value here assumes exact "
-        f"expectation values, an upper bound on what a device could measure.\n"
+        f"Measurement: {result.get('measurement_label', '')}. {measured}\n"
         f"n = {result.get('n_seeds', len(seeds))} seed pairs. A clause passes only if every "
         f"seed has p <= {level:g}; each null refits the readout on {n_perm} permutations, "
         f"p = (1 + #null >= observed) / {n_perm + 1}. Protocol G0.7 "

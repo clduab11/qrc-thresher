@@ -222,23 +222,59 @@ def qrc_feature_map(cfg: AlphaLiteConfig) -> FeatureMap:
     return feature_map
 
 
-def evaluate_config(cfg: AlphaLiteConfig, protocol: Optional[G07Protocol] = None) -> dict:
-    """Evaluate G0.7 on the reservoir and seed pairs of an experiment config."""
+MODELS = ('pennylane_qrc', 'esn_linear', 'esn_nonlinear')
+
+
+def evaluate_config(
+    cfg: AlphaLiteConfig,
+    protocol: Optional[G07Protocol] = None,
+    model: str = 'pennylane_qrc',
+) -> dict:
+    """Evaluate G0.7 on the seed pairs of an experiment config.
+
+    Args:
+        cfg: Experiment config (seed pairs, readout, reservoir size).
+        protocol: Registered protocol (default: load_protocol()).
+        model: 'pennylane_qrc' for the configured quantum reservoir, or an ESN preset
+            ('esn_linear', 'esn_nonlinear') with N matched to the QRC feature count.
+
+    Raises:
+        ValueError: For an unknown model, or a config the protocol refuses.
+    """
+    if model not in MODELS:
+        raise ValueError(f'unknown G0.7 model {model!r}; choose from {list(MODELS)}')
     protocol = protocol or load_protocol()
     check_config(cfg, protocol)
-    details = {
-        'reservoir': 'pennylane_qrc',
-        'backend': cfg.reservoir.backend,
-        'n_qubits': cfg.reservoir.n_qubits,
-        'depth': cfg.reservoir.depth,
-        'readout': cfg.reservoir.readout,
-        'experiment_name': cfg.experiment_name,
-    }
+    if model == 'pennylane_qrc':
+        feature_map = qrc_feature_map(cfg)
+        details = {
+            'reservoir': 'pennylane_qrc',
+            'kind': 'quantum',
+            'backend': cfg.reservoir.backend,
+            'n_qubits': cfg.reservoir.n_qubits,
+            'depth': cfg.reservoir.depth,
+            'readout': cfg.reservoir.readout,
+        }
+    else:
+        from qrc_thresher.baselines import esn
+
+        params = esn.ESN_PRESETS[model]
+        n_units = esn._n_features(cfg.reservoir.n_qubits, cfg.reservoir.readout)
+        feature_map = esn.esn_feature_map(n_units, params)
+        details = {
+            'reservoir': 'esn',
+            'kind': 'classical',
+            'n_units': n_units,
+            'input_connectivity': esn.INPUT_CONNECTIVITY,
+            'recurrent_connectivity': esn.RECURRENT_CONNECTIVITY,
+            **params.__dict__,
+        }
+    details['experiment_name'] = cfg.experiment_name
     return evaluate(
-        qrc_feature_map(cfg),
+        feature_map,
         protocol,
         seed_pairs_from_config(cfg),
-        model_name='pennylane_qrc',
+        model_name=model,
         model_details=details,
     )
 

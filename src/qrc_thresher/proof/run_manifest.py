@@ -32,7 +32,9 @@ _RUNS_CSV = Path('results') / 'runs.csv'
 _COMPUTE_JSON = Path('results') / 'cumulative_compute.json'
 _WATTS_PER_RUN = 15.0  # documented constant: estimated CPU power draw per run (watts)
 
-SCHEMA_VERSION = '1.2'  # 1.2 adds measurement_model (docs/DECISIONS.md D004)
+# 1.2 adds measurement_model (docs/DECISIONS.md D004); 1.3 adds the search budget,
+# n_configs and n_validation_evals (D009).
+SCHEMA_VERSION = '1.3'
 
 CSV_FIELDNAMES = [
     'run_id',
@@ -58,6 +60,8 @@ CSV_FIELDNAMES = [
     'primary_metric_name',
     'primary_metric_value',
     'measurement_model',
+    'n_configs',
+    'n_validation_evals',
 ]
 
 
@@ -124,6 +128,8 @@ class RunManifest:
     primary_metric_name: str = ''
     primary_metric_value: Optional[float] = None
     measurement_model: str = 'exact'
+    n_configs: Optional[int] = None
+    n_validation_evals: Optional[int] = None
 
 
 def _git_commit_hash() -> str:
@@ -228,6 +234,8 @@ def create_manifest(
     primary_metric_name: str = '',
     primary_metric_value: Optional[float] = None,
     measurement_model: str = 'exact',
+    n_configs: Optional[int] = None,
+    n_validation_evals: Optional[int] = None,
 ) -> RunManifest:
     """Create a new run manifest record.
 
@@ -249,6 +257,11 @@ def create_manifest(
         primary_metric_value: Value of the primary metric, if computed.
         measurement_model: Measurement model the run's features were computed
             under (config field measurement.model). 'exact' is an oracle upper bound.
+        n_configs: Model hyperparameter configurations evaluated before this run was
+            deployed (1 when nothing was searched).
+        n_validation_evals: Configuration x validation-block evaluations used to choose
+            among them (0 when nothing was searched). The readout's own RidgeCV is the
+            same for every model and is not counted.
 
     Returns:
         RunManifest with all required schema v1.2 fields populated.
@@ -288,6 +301,8 @@ def create_manifest(
         primary_metric_name=primary_metric_name,
         primary_metric_value=primary_metric_value,
         measurement_model=measurement_model,
+        n_configs=n_configs,
+        n_validation_evals=n_validation_evals,
     )
 
 
@@ -337,6 +352,8 @@ def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
         'primary_metric_name': manifest.primary_metric_name,
         'primary_metric_value': manifest.primary_metric_value,
         'measurement_model': manifest.measurement_model,
+        'n_configs': manifest.n_configs,
+        'n_validation_evals': manifest.n_validation_evals,
     }
 
     with csv_path.open('a', newline='') as f:

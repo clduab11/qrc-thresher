@@ -173,6 +173,8 @@ class ExperimentDB:
             'primary_metric_name': manifest.primary_metric_name,
             'primary_metric_value': manifest.primary_metric_value,
             'measurement_model': manifest.measurement_model,
+            'n_configs': manifest.n_configs,
+            'n_validation_evals': manifest.n_validation_evals,
         })
 
     def _append_to_csv(self, manifest: RunManifest) -> None:
@@ -218,6 +220,8 @@ class ExperimentDB:
             'primary_metric_name': manifest.primary_metric_name,
             'primary_metric_value': manifest.primary_metric_value,
             'measurement_model': manifest.measurement_model,
+            'n_configs': manifest.n_configs,
+            'n_validation_evals': manifest.n_validation_evals,
         }
 
         with csv_path.open('a', newline='') as f:
