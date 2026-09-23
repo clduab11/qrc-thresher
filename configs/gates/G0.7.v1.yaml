@@ -1,0 +1,76 @@
+# G0.7 memory sanity gate: pre-registration, version 1 (option A).
+#
+# Committed on its own, before any evaluation that uses it (docs/DECISIONS.md D005, D008).
+# Never edit this file. A changed protocol is a new version file (G0.7.v2.yaml) with its own
+# DECISIONS entry. tests/test_preregistration.py pins a hash of this file's parsed content.
+
+gate: G0.7
+version: 1
+option: A
+decision_records: [D005, D008]
+
+measurement:
+  model: exact
+  label: exact (oracle upper bound)
+
+seeds:
+  # Seed pairs come from the experiment config: (task_seed + i, reservoir_seed + i)
+  # for i = 0 .. n_seeds - 1.
+  source: experiment_config
+  min_seeds: 3
+  rule: every_seed            # a clause passes only if every seed passes it
+
+readout:
+  # The harness protocol: one RidgeCV fit over all targets of a clause jointly (a single
+  # shared ridge penalty), contiguous (unshuffled) folds, with an intercept. The gate refuses
+  # to run if the experiment config's training.ridge_alphas or training.cv_folds differ.
+  method: ridge_cv
+  alpha_selection: joint
+  ridge_alphas: [1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2, 1.0, 100.0]
+  cv_folds: 5
+  cv_scheme: contiguous
+  fit_intercept: true
+
+permutation_null:
+  # Train rows and test rows are permuted independently; the readout is refit on every
+  # permutation. Permutations come from numpy default_rng([rng_seed, clause_index,
+  # task_seed, reservoir_seed]); each permutation draws the train order, then the test order.
+  n_permutations: 200
+  permute: train_and_test_independently
+  refit_readout: true
+  rng_seed: 20260922
+  draw_order: train_then_test
+  p_value: one_plus_count_ge_over_n_plus_one   # p = (1 + #{null >= observed}) / (n + 1)
+
+stm:
+  clause_index: 0
+  task: stm
+  length: 500
+  train_frac: 0.7
+  delay_max: 20
+  washout: 50                 # first 50 rows dropped from training for every model
+  # S = sum over k = 1..delay_max of r2_k, where r2_k is the held-out squared Pearson
+  # correlation between the prediction and u_{t-k}. k = 0 is reported, never counted.
+  statistic: sum_r2_k1_to_delay_max
+  significance_level: 0.05    # a seed passes if p <= significance_level
+
+parity:
+  clause_index: 1
+  task: parity
+  window: 2
+  length: 500
+  train_frac: 0.7
+  washout: 50
+  statistic: heldout_accuracy
+  decision_threshold: 0.5     # predicted label is 1 when the ridge output is >= 0.5
+  significance_level: 0.05
+
+degenerate:
+  # A seed is flagged degenerate, and fails its clause without a score, if every training
+  # feature column has std <= std_tolerance, if any held-out prediction column has
+  # std <= std_tolerance, or if any observed or null statistic is not finite.
+  std_tolerance: 1.0e-12
+
+reporting:
+  null_quantile: 0.95         # per-delay null quantile shown in tables and figures
+  figure: forgetting_curve

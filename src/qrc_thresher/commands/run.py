@@ -230,6 +230,7 @@ def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
         task_name=task,
         primary_metric_name=primary_metric_name,
         primary_metric_value=primary_metric_value,
+        measurement_model=cfg.measurement.model,
     )
     manifest.run_id = run_id
 

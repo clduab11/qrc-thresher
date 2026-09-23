@@ -24,13 +24,15 @@ from uuid import uuid4
 
 import yaml
 
+from qrc_thresher.config import MEASUREMENT_LABELS
+
 logger = logging.getLogger(__name__)
 
 _RUNS_CSV = Path('results') / 'runs.csv'
 _COMPUTE_JSON = Path('results') / 'cumulative_compute.json'
 _WATTS_PER_RUN = 15.0  # documented constant: estimated CPU power draw per run (watts)
 
-SCHEMA_VERSION = '1.1'
+SCHEMA_VERSION = '1.2'  # 1.2 adds measurement_model (docs/DECISIONS.md D004)
 
 CSV_FIELDNAMES = [
     'run_id',
@@ -55,6 +57,7 @@ CSV_FIELDNAMES = [
     'task_name',
     'primary_metric_name',
     'primary_metric_value',
+    'measurement_model',
 ]
 
 
@@ -84,6 +87,7 @@ class RunManifest:
     task_name: str = ''
     primary_metric_name: str = ''
     primary_metric_value: Optional[float] = None
+    measurement_model: str = 'exact'
 
 
 def _git_commit_hash() -> str:
@@ -187,6 +191,7 @@ def create_manifest(
     task_name: str = '',
     primary_metric_name: str = '',
     primary_metric_value: Optional[float] = None,
+    measurement_model: str = 'exact',
 ) -> RunManifest:
     """Create a new run manifest record.
 
@@ -206,10 +211,20 @@ def create_manifest(
         primary_metric_name: Name of the run's primary metric (e.g. 'mc',
             'accuracy', 'nrmse'). Empty when not applicable.
         primary_metric_value: Value of the primary metric, if computed.
+        measurement_model: Measurement model the run's features were computed
+            under (config field measurement.model). 'exact' is an oracle upper bound.
 
     Returns:
-        RunManifest with all required schema v1.1 fields populated.
+        RunManifest with all required schema v1.2 fields populated.
+
+    Raises:
+        ValueError: If measurement_model is not a known measurement model.
     """
+    if measurement_model not in MEASUREMENT_LABELS:
+        raise ValueError(
+            f'Unknown measurement_model {measurement_model!r}; '
+            f'expected one of {sorted(MEASUREMENT_LABELS)}'
+        )
     py_info = sys.version_info
     python_version = f'{py_info.major}.{py_info.minor}.{py_info.micro}'
 
@@ -236,6 +251,7 @@ def create_manifest(
         task_name=task_name,
         primary_metric_name=primary_metric_name,
         primary_metric_value=primary_metric_value,
+        measurement_model=measurement_model,
     )
 
 
@@ -281,6 +297,7 @@ def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
         'task_name': manifest.task_name,
         'primary_metric_name': manifest.primary_metric_name,
         'primary_metric_value': manifest.primary_metric_value,
+        'measurement_model': manifest.measurement_model,
     }
 
     with csv_path.open('a', newline='') as f:

@@ -10,6 +10,8 @@ reservoir:
   n_qubits: 4
   depth: 3
   readout: z_only
+measurement:
+  model: exact  # exact expectation values = oracle upper bound (docs/DECISIONS.md D004)
 baseline:
   enabled:
     - esn

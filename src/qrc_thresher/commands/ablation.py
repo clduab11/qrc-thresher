@@ -161,6 +161,7 @@ def ablation_handler(name: str, config_path: str, seed: Optional[int]) -> int:
         task_name=f'ablation:{name}',
         primary_metric_name=primary_metric_name,
         primary_metric_value=primary_metric_value,
+        measurement_model=cfg.measurement.model,
     )
     append_to_csv(manifest)
     update_cumulative_compute(sum(timing.values()))

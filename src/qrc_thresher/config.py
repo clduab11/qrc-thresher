@@ -61,6 +61,40 @@ class ProofConfig(BaseModel):
     log_artifacts: bool = False
 
 
+MEASUREMENT_LABELS: Dict[str, str] = {
+    'exact': 'exact (oracle upper bound)',
+}
+
+
+class MeasurementConfig(BaseModel):
+    """Measurement model for reservoir readouts (docs/DECISIONS.md D004).
+
+    'exact' means exact expectation values. They are an oracle upper bound on what a
+    device could measure and are never used for a headline claim. Finite-shot models
+    are added when the shot path lands.
+    """
+
+    model: Literal['exact'] = 'exact'
+
+
+def measurement_label(model: str) -> str:
+    """Return the report label for a measurement model.
+
+    Args:
+        model: Measurement model name, e.g. 'exact'.
+
+    Returns:
+        Label used in every report, e.g. 'exact (oracle upper bound)'.
+
+    Raises:
+        ValueError: If the model is unknown.
+    """
+    try:
+        return MEASUREMENT_LABELS[model]
+    except KeyError:
+        raise ValueError(f'Unknown measurement model: {model!r}') from None
+
+
 class SeedsConfig(BaseModel):
     """Seed configuration for reproducibility."""
 
@@ -85,6 +119,7 @@ class AlphaLiteConfig(BaseModel):
     experiment_name: str
     task: TaskConfig
     reservoir: ReservoirConfig
+    measurement: MeasurementConfig = Field(default_factory=MeasurementConfig)
     baseline: BaselineConfig
     ablation: Optional[AblationConfig] = None
     training: TrainingConfig

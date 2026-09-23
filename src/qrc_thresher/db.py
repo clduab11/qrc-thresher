@@ -11,7 +11,7 @@ from typing import Optional
 
 import filelock
 
-from qrc_thresher.proof.run_manifest import RunManifest
+from qrc_thresher.proof.run_manifest import CSV_FIELDNAMES, RunManifest
 
 logger = logging.getLogger(__name__)
 
@@ -43,30 +43,8 @@ CREATE INDEX IF NOT EXISTS idx_task_success ON runs(task_name, success);
 CREATE INDEX IF NOT EXISTS idx_timestamp ON runs(timestamp_utc);
 """
 
-_CSV_FIELDNAMES = [
-    'run_id',
-    'timestamp_utc',
-    'git_commit_hash',
-    'git_branch',
-    'config_path',
-    'config_hash',
-    'circuit_hash',
-    'task_seed',
-    'reservoir_seed',
-    'python_version',
-    'backend_device',
-    'runtime_per_stage_seconds',
-    'entanglement_metric',
-    'success',
-    'failure_reason',
-    'artifact_paths',
-    'package_versions',
-    'platform',
-    'cli_command',
-    'task_name',
-    'primary_metric_name',
-    'primary_metric_value',
-]
+# One column list for every writer of results/runs.csv.
+_CSV_FIELDNAMES = CSV_FIELDNAMES
 
 
 class ExperimentDB:
@@ -184,6 +162,7 @@ class ExperimentDB:
             'task_name': manifest.task_name,
             'primary_metric_name': manifest.primary_metric_name,
             'primary_metric_value': manifest.primary_metric_value,
+            'measurement_model': manifest.measurement_model,
         })
 
     def _append_to_csv(self, manifest: RunManifest) -> None:
@@ -225,6 +204,7 @@ class ExperimentDB:
             'task_name': manifest.task_name,
             'primary_metric_name': manifest.primary_metric_name,
             'primary_metric_value': manifest.primary_metric_value,
+            'measurement_model': manifest.measurement_model,
         }
 
         with csv_path.open('a', newline='') as f:
