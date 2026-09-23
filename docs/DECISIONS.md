@@ -288,3 +288,170 @@ uses.
 **Decided by**: PI, on review at checkpoint CP2 (details proposed by the builder).
 
 ---
+
+## 2026-09-23: D010 — Windowed reservoir (design a), matched ablations, G0.5 at one tolerance
+
+**Decision**: Design (a) of D003 is built as follows, fixing defects D1, D12, D14 and D6. Items
+marked (builder) were proposed by the builder at checkpoint CP3a; the rest come from the PI's
+CP3 instructions and CP3a rulings.
+
+Windowed reservoir (D1)
+- Schedule: at every layer, qubit j re-uploads u_{t−(j mod w)} through RY(π·u), using 0 where
+  t − (j mod w) < 0. The rest of each layer is unchanged: RZ(θ_{d,j}) and RX(φ_{d,j}) on every
+  qubit, then the CNOT ring j → (j + 1) mod n. Every row starts from |0…0⟩, so row t depends on
+  u_t … u_{t−w+1} only. A test-local PennyLane circuit, written from this text alone, checks the
+  reservoir and its no-entangle ablation against it within 1e-12.
+- `reservoir.window` defaults to 1. A window outside 1..n_qubits is refused, by the config and
+  by the reservoir. At w = 1 the circuit is today's, and it stays the memoryless negative
+  control; `reservoirs/pennylane_qrc.py` is left unchanged as the w = 1 reference. (builder)
+  w = 1 runs the same windowed code path as every other w; `alpha_lite.yaml` states
+  `window: 1` explicitly.
+- The window draws no randomness: the angles come from `build_reservoir_params` with
+  `default_rng(reservoir_seed)`, so they are the same at every w. The circuit hash is
+  `compute_circuit_hash(params)` at w = 1. For w ≥ 2 it is the SHA-256 of the string
+  "<compute_circuit_hash(params)>,window=<w>".
+- The reservoir lives in a new module, `reservoirs/windowed_qrc.py`, registered as the builtin
+  reservoir plugin `windowed`. Every config-driven build (engine, run command, ablation command,
+  G0.7) goes through one helper, `reservoir_from_config(cfg, reservoir_seed, ablation=None)`,
+  which reads `reservoir.window` and refuses an unknown ablation name with ValueError. Outside
+  the helper's module, only G0.5 and the G0 health check call `build_reservoir_params`
+  directly.
+- (builder) Speed-up: within one call, each distinct per-qubit input row is simulated once and
+  reused. This is not done for phase_random, whose angles change at every step. On binary inputs
+  a w-window reservoir has at most 2^w distinct rows. A test checks the result bit for bit
+  against the per-step loop.
+
+Matched ablations (D12)
+- phase_random, no_entangle and haar inherit the reservoir's per-pair reservoir_seed, readout
+  (ZZ included), window and re-upload schedule. Only the tested factor changes:
+  - no_entangle removes the CNOT ring;
+  - phase_random draws fresh RZ and RX angles at every step;
+  - haar replaces each layer's RZ, RX and CNOT ring with an independent Haar-random unitary on
+    all n qubits, applied after that layer's re-upload (L draws).
+- Random streams are `default_rng([reservoir_seed, tag])`. Today's `default_rng(reservoir_seed
+  + 1)` and `(reservoir_seed + 2)` are the reservoir streams of the next seed pairs: pair
+  (42, 137)'s phase_random angles at step 0 were pair (43, 138)'s reservoir angles. (builder)
+  Tags: phase_random 1, haar 2, random_features 3.
+- (builder) Draw order: phase_random draws, for t = 0, 1, …, the step's RZ angles and then its
+  RX angles, each Uniform[0, 2π) of shape (L, n), as today. haar draws its L unitaries in layer
+  order with `scipy.stats.unitary_group.rvs(2^n, random_state=rng)`.
+- Switch-back: restoring the tested factor reproduces the reservoir. For no_entangle and
+  phase_random the features are bit-identical (np.array_equal). For haar, feeding each layer the
+  unitary of its own RZ, RX and CNOT ring reproduces them within 1e-10, maximum absolute
+  difference. (builder) The tolerance is 1e-10 because the two paths apply the same layer as one
+  2^n × 2^n matrix instead of 3n gates, so in float64 they differ by rounding only, of order
+  1e-15 per operation. That leaves about four orders of magnitude of margin, far below any
+  physical effect.
+- (builder) An ablation's circuit hash identifies the circuit it simulates. It is the SHA-256 of
+  the reservoir's hash followed by ",entangle=False" (no_entangle),
+  ",random_phases=[<reservoir_seed>,1]" (phase_random) or ",layer_unitaries=<SHA-256 of the
+  unitaries' bytes>" (haar), where the bytes are the L complex128 matrices in C order,
+  concatenated in layer order. Restoring the factor (for haar, setting layer_unitaries to None)
+  restores the reservoir's hash; a haar ablation fed its own layer unitaries keeps a
+  layer_unitaries hash.
+- Plugins (PI rulings at CP3a): the builtin reservoir plugins `phase_random`, `no_entangle` and
+  `haar` in `plugins/builtin.py` point at the matched ablations, and `windowed` at the reservoir
+  itself. (builder) All four take `(u, params, window=1, reservoir_seed=None)` and return
+  features of shape (T, F). phase_random and haar need `reservoir_seed` for their streams, and
+  they refuse `reservoir_seed=None` with a ValueError that names `reservoir_seed`. The legacy
+  functions `extract_features_phase_random`, `extract_features_no_entangle` and
+  `extract_features_haar` in `reservoirs/ablations.py` emit a DeprecationWarning that names the
+  function, and the referee deletes them in CP4.
+- RKS (random_features) gets the reservoir's feature count F (n for z_only, n + n(n−1)/2 for
+  z_and_zz) and the per-pair stream `default_rng([reservoir_seed, 3])`. Its input stays u_t, and
+  its bandwidth stays σ/F with σ = 1, until D13 (CP4). It is built by `rks_from_config(cfg,
+  reservoir_seed)`; `reservoir_from_config(..., ablation='random_features')` raises ValueError,
+  because RKS is not a variant of the circuit. (builder) An RKS row's hash is the SHA-256 of F,
+  σ, W and b.
+- The ablation command runs every seed pair of the config, as the engine does, and writes one
+  row per pair under the existing task names `ablation:<name>`. Its train and score rows are
+  unchanged (D16, CP4). (builder) Its `--seed` option is removed, since the pairs come from the
+  config.
+- `random_features` is removed from `baseline.enabled` in `alpha_lite.yaml` until its D13 fix
+  (the PI's CP2 ruling).
+- The no-entangle ablation isolates entanglement only under the z_only readout. In a product
+  state ⟨Z_iZ_j⟩ = ⟨Z_i⟩⟨Z_j⟩, which multiplies delays and can form XOR. Entanglement
+  comparisons (G1, G2, G2.5) will be restricted to z_only when they are re-registered in CP4.
+
+G0.5 and one tolerance (D14, D6)
+- `CROSSCHECK_TOLERANCE = 1e-6` (float64) is defined once, as a public constant, in
+  `reservoirs/qiskit_crosscheck.py`. The gate imports it, and no literal tolerance is passed to
+  `verify_crosscheck`. Float32 paths get their own pre-registered tolerance (D006).
+- The Qiskit circuit is built independently from the same angles. It has its own per-qubit input
+  schedule and imports nothing from PennyLane or from qrc_thresher. It returns the Z
+  expectations, then ZZ in PennyLane's pair order (i < j, lexicographic).
+- Cases: (n, L, seed) = (2, 2, 2026), (4, 3, 137) and (5, 4, 7), each at every distinct w in
+  {1, 2, n}, with both readouts: 16 cases. Each case covers 6 steps, t = 0..5, which include the
+  zero-padded rows t < w − 1. (builder) The angles come from `build_reservoir_params` with
+  `default_rng(seed)`, and the 6 inputs are the next 6 draws from that generator,
+  Uniform(−1, 1). For (2, 2, 2026) the first five are today's G0.5 inputs.
+- A case passes when max |PennyLane − Qiskit| ≤ 1e-6 over its rows and features, and G0.5
+  passes when every case does. The evidence lists every case with its max |diff|. The tolerance
+  is never loosened; any disagreement is reported.
+- (builder) The Qiskit side runs Aer's statevector method on the untranspiled circuits (RY, RZ,
+  RX and CX are Aer basis gates), one job per case.
+
+G0.7 wiring
+- `qrc-thresher gate` gains `--config` (default `configs/alpha_lite.yaml`) and the model
+  `no_entangle`, the matched no-entangle ablation of the configured reservoir. G0.7 records the
+  window and the ablation in its model details. The G0.7 v1 protocol, its evaluation, clause and
+  permutation functions are unchanged.
+- `configs/windowed_w2.yaml` and `configs/windowed_w4.yaml` differ from `alpha_lite.yaml` only in
+  `reservoir.window` and `experiment_name`.
+
+Expectations, registered before any evaluation (findings, not tests)
+- Under G0.7 v1, the w = 2 and w = 4 reservoirs pass the STM clause, the full w = 2 circuit
+  passes the parity clause, and its no-entangle ablation (z_only) fails the parity clause. At
+  w = 1 the default config reproduces the referee's CP2 host result exactly (FAIL, with
+  S = 0.180 / 0.157 / 0.122). No outcome is registered for the w = 4 parity clause or for the
+  no-entangle STM clause.
+- Per-delay r² is reported, not asserted. RY(πu) alone gives ⟨Z⟩ = cos πu, which is even in u,
+  so how linearly a feature carries a delay depends on the random angles (today's r2_k0 is
+  0.12 / 0.64 / 0.73).
+- What fixes D1 is the exact memory-cliff test. Changing u_{t−k} for any k ≥ w, or any future
+  input, leaves row t bit-identical, and changing it for each k < w moves row t by more than
+  1e-6. G0.7 verdicts on windowed reservoirs are findings. If a seed fails the STM clause while
+  the exact test passes, it is reported. Any design change it motivates, such as the encoding
+  scale or the readout, is a new D011, registered before anything is re-evaluated.
+
+Known answer (tests)
+- On binary inputs every no-entangle column of the w = 2, z_only reservoir (n = 4, L = 3) has
+  interaction contrast X(1,1) − X(1,0) − X(0,1) + X(0,0) = 0 within 1e-12. XOR, whose contrast
+  is −2, is therefore outside the span of the columns plus an intercept, and the ablation's
+  G0.7 v1 parity clause is expected to fail.
+- Being outside the span does not force the clause to fail. Under an additive least-squares fit,
+  a (u_{t−1}, u_t) cell is predicted correctly exactly when its training count exceeds the
+  harmonic mean of the four cell counts, so a seed can reach 75% held-out accuracy and pass at
+  p = 1/201. About 41% of seeds do, so all three seeds, and with them the clause, pass with prior
+  probability about 7% in the least-squares limit, or about 1–5% under the registered ridge
+  readout. These are the referee's CP3a estimates. Simulating the least-squares rule over 100,000
+  sequences, the builder found 41.4% of seeds with three of the four cells right (41.7% with
+  held-out accuracy of at least 0.60, a proxy for passing) and 7.3% for all three seeds
+  (0.417³).
+- The test asserts the clause, not each seed, and it asserts that no seed is degenerate. If the
+  clause passes, the red result is reported as a finding about G0.7 v1 and left red: no seed, n,
+  depth, encoding scale, window, readout, alpha, threshold or test changes, and no xfail. The
+  full circuit's contrast is reported, not asserted.
+
+**Consequences**: A w-window reservoir remembers exactly w − 1 past steps; memory beyond the
+window needs a carried-state design (D003). Ablation rows get one distinct hash per seed pair,
+and the task names that G1, G2 and G2.5 read are unchanged. No command calls the unmatched
+legacy ablations in `reservoirs/ablations.py` any more; they are deprecated until the referee
+deletes them in CP4. G0.5 grows from 5 inputs on one 2-qubit circuit to 16 cases.
+
+**Rationale**: The window gives design (a) an exact, testable memory horizon while each row
+stays a fresh, stateless simulation, so w = 1 remains today's circuit bit for bit. Matching
+the ablations to the reservoir makes each one change a single factor, which an ablation
+comparison needs; drawing an independent Haar unitary per layer keeps the re-upload schedule,
+so the Haar ablation changes the dynamics and not the input's frequency spectrum (D12 iii).
+G0.5 covers the reservoir designs, with both readouts and the padded rows. The ablation
+circuits are covered by the switch-back tests and the test-local reference circuit.
+
+**Decided by**: PI, 2026-09-23, in the CP3 instructions. On review at checkpoint CP3a the PI
+approved every (builder) item as written, ruled that the legacy ablations are repointed and
+deprecated, and removed `ablation --seed`. The Haar byte clause and the plugin signature were
+written in the CP3a revision round and confirmed by the PI at the CP3a re-review, which also
+ruled that the phase_random and haar plugins refuse `reservoir_seed=None`. D010 is frozen once
+committed; any change is proposed as D011.
+
+---
