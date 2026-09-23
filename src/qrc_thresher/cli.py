@@ -112,7 +112,9 @@ def ablation_cmd(name: str, config_path: str, seed: Optional[int]) -> None:
 @cli.command('gate')
 @click.argument(
     'name',
-    type=click.Choice(['G0', 'G0.5', 'G1', 'G2', 'G2.5', 'G3', 'G4', 'G5', 'G6', 'G7']),
+    type=click.Choice(
+        ['G0', 'G0.5', 'G0.7', 'G1', 'G2', 'G2.5', 'G3', 'G4', 'G5', 'G6', 'G7']
+    ),
 )
 def gate_cmd(name: str) -> None:
     """Evaluate a decision gate from results/runs.csv.
@@ -124,7 +126,9 @@ def gate_cmd(name: str) -> None:
 
     Each gate writes results/gates/<name>.json with the verdict, the
     contributing run_ids, and the numerical evidence so reviewers can audit
-    the decision against the manifest.
+    the decision against the manifest. G0.7 (memory sanity, pre-registered in
+    configs/gates/G0.7.v1.yaml) instead writes a new timestamped JSON and
+    forgetting-curve figure on every evaluation.
     """
     sys.exit(gate_handler(name))
 

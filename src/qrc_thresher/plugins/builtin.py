@@ -80,6 +80,7 @@ def register_builtin_plugins(hub: RegistryHub) -> None:
     # Gates
     hub.gates.register('G0', _lazy_plugin('qrc_thresher.commands.gate', '_evaluate_gate_g0'))
     hub.gates.register('G0.5', _lazy_plugin('qrc_thresher.commands.gate', '_evaluate_gate_g05'))
+    hub.gates.register('G0.7', _lazy_plugin('qrc_thresher.commands.gate', '_evaluate_gate_g07'))
     hub.gates.register('G1', _lazy_plugin('qrc_thresher.commands.gate', '_evaluate_gate_g1'))
     hub.gates.register('G2', _lazy_plugin('qrc_thresher.commands.gate', '_evaluate_gate_g2'))
     hub.gates.register('G2.5', _lazy_plugin('qrc_thresher.commands.gate', '_evaluate_gate_g25'))

@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from qrc_thresher.config import load_config
+from qrc_thresher.config import load_config, measurement_label
 from qrc_thresher.reservoirs.pennylane_qrc import build_reservoir_params, extract_features
 from qrc_thresher.tasks.stm import generate_stm
 from qrc_thresher.tasks.temporal_parity import generate_parity
@@ -322,7 +322,7 @@ class TestReporting:
 
         fig = plot_forgetting_curve(_evaluate('delay_line'))
         texts = [t.get_text() for t in fig.findobj(matplotlib.text.Text)]
-        assert any('exact (oracle)' in t for t in texts)
+        assert any(measurement_label('exact') in t for t in texts)
         ax = fig.axes[0]
         assert len(ax.get_lines()) >= len(SEED_PAIRS)  # one r2_k curve per seed
         assert len(ax.collections) >= len(SEED_PAIRS)  # one shaded null band per seed

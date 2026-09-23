@@ -38,6 +38,15 @@ def gate_handler(name: str) -> int:
         print(f'Gate {name}: {result}')
         return {'PASS': 0, 'FAIL': 1, 'INSUFFICIENT_EVIDENCE': 2}.get(result, 2)
 
+    if name == 'G0.7':
+        # G0.7 writes a new timestamped JSON and figure per evaluation (never overwrites).
+        result, evidence, run_ids = _evaluate_gate_g07()
+        print(f'Gate {name}: {result}')
+        print(f"  {evidence['message']}")
+        print(f"  json: {evidence['json']}")
+        print(f"  figure: {evidence['figure']}")
+        return {'PASS': 0, 'FAIL': 1, 'INSUFFICIENT_EVIDENCE': 2}.get(result, 2)
+
     if name == 'G7':
         result, evidence, run_ids = _evaluate_gate_g7()
         _write_gate_result(gates_dir, name, result, evidence, run_ids)
@@ -327,6 +336,33 @@ def _evaluate_gate_g05() -> tuple[str, dict, list]:
     except Exception as exc:
         evidence['error'] = str(exc)
         return 'FAIL', evidence, run_ids
+
+
+def _evaluate_gate_g07(
+    config_path: Optional[Path] = None,
+    out_dir: Optional[Path] = None,
+) -> tuple[str, dict, list]:
+    """G0.7: memory sanity gate (pre-registered v1) on the configured reservoir.
+
+    The protocol is configs/gates/G0.7.v1.yaml. Every evaluation writes a new
+    timestamped JSON and forgetting-curve figure under results/gates/, never
+    overwriting an earlier one, and returns their paths as evidence.
+    """
+    from qrc_thresher.config import load_config
+    from qrc_thresher.gates import g07
+
+    cfg = load_config(config_path or Path('configs/alpha_lite.yaml'))
+    result = g07.evaluate_config(cfg)
+    paths = g07.write_report(result, out_dir or Path('results') / 'gates')
+    evidence = {
+        'message': result['message'],
+        'stm_clause': result['clauses']['stm']['result'],
+        'parity_clause': result['clauses']['parity']['result'],
+        'measurement_label': result['measurement_label'],
+        'json': str(paths['json']),
+        'figure': str(paths['figure']),
+    }
+    return result['result'], evidence, []
 
 
 def _evaluate_gate_g3(successful) -> tuple[str, dict, list]:
