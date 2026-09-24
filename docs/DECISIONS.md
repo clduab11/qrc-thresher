@@ -838,3 +838,42 @@ findings is a post-hoc choice, and D014 says so rather than presenting it as pre
 proposed by the builder at CP4a). D014 is frozen once committed.
 
 ---
+
+## 2026-09-24: D015 — (builder) Implementation notes for D011–D014 at CP4b
+
+**Decision**: The choices below were made by the builder while making the CP4a tests green.
+None changes a threshold, a metric, a direction, a floor or the protocol file; each is listed
+so Chris can reverse it. Items Chris rejects are to be reverted before the CP4b commits land.
+
+- Sweep ids are per tuning record. `tune TASK` stamps its own `sweep_id`, so a config has three
+  records and three stamps. A row inherits the stamp (and `tuning_record_sha`) of the record it
+  was deployed from: `run parity --design-task stm` carries the STM record's stamp. The family
+  evaluator therefore filters each member's tuned rows by the stamp of its *design* task (G1,
+  G2.5, G3: STM; G2: parity; G4: NARMA), and G1(a) checks the G0.7 `tuned_qrc` file against the
+  STM record's stamp (PI ruling 4). Default-design rows are untuned and carry the stamp of
+  whichever record deployed them, so the default table admits rows from any of the config's
+  three stamps. The family JSON echoes `sweep_id` and `tuning_record_sha` as one value when the
+  three records agree and as a `{task: value}` map otherwise.
+- Ablation rows are told apart by task through `primary_metric_name` (`stm_memory`, `accuracy`,
+  `nrmse`), since `ablation:<name>` carries no task; `task_names.task_metric` is the one place
+  that spells this. Part of the task-name suffix debt of PI ruling 2.
+- A QRC arm is the rows of the member's task whose `design` label matches and whose
+  `circuit_hash` equals the design's hash *for their own pair*; rows of another design (for
+  example design_parity rows on parity when G1(b) wants design_STM) drop out before pairing.
+  An inherited arm is selected the same way through the D010 suffix rule, so `ablation ...
+  --design default` rows never count as candidates for the tuned comparison. Two candidate rows
+  for one pair after this selection are a duplicate and make the member INSUFFICIENT (PI ruling
+  1).
+- `--design default` deploys two rows per pair (w = 2 `default`, w = 1 `default_w1`); the ESN
+  default is the `esn_nonlinear` preset with the bias; RKS has no default design and is skipped
+  under `--design default` (PI ruling 5).
+- The NARMA-10 minimum of 10 washout rows applies to every config (the task is a CLI argument),
+  and the validator reports every violated minimum in one message.
+- `summary` writes a per-arm table (task_name, design, metric, n, mean, std) through
+  `task_names.parse_task_name`, without the optional `tabulate` dependency.
+- The G1..G4 and G2.5 entry points in `pyproject.toml` stay as thin wrappers over the family
+  evaluator (`commands.gate._family_member`); `pyproject.toml` is untouched (debt).
+
+**Decided by**: builder, 2026-09-24, for PI review with the CP4b report.
+
+---
