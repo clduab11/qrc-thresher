@@ -36,7 +36,10 @@ def _arm_table(df) -> str:
     for (task_name, design, metric), group in ok.groupby(
         ['task_name', 'design', 'primary_metric_name'], dropna=False, sort=True
     ):
-        parsed = parse_task_name(task_name)
+        try:
+            parsed = parse_task_name(task_name)
+        except ValueError:
+            parsed = {'kind': 'unknown', 'model': None, 'task': None}
         values = group['primary_metric_value'].dropna()
         rows.append({
             'task_name': task_name,
@@ -46,8 +49,9 @@ def _arm_table(df) -> str:
             'design': design,
             'metric': metric,
             'n': int(len(values)),
-            'mean': float(values.mean()) if len(values) else float('nan'),
-            'std': float(values.std(ddof=1)) if len(values) > 1 else 0.0,
+            'mean': float(values.mean()) if len(values) else 'n/a',
+            'std': (float(values.std(ddof=1)) if len(values) > 1
+                    else (0.0 if len(values) else 'n/a')),
         })
     return _markdown_table(pd.DataFrame(rows))
 

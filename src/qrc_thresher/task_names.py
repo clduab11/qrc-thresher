@@ -50,7 +50,11 @@ def baseline_task_name(model: str, task: str) -> str:
 
 
 def parse_task_name(task_name: str) -> Dict[str, Optional[str]]:
-    """Inverse of the builders: {'kind': 'qrc'|'ablation'|'baseline', 'model', 'task'}."""
+    """Inverse of the builders: {'kind': 'qrc'|'ablation'|'baseline', 'model', 'task'}.
+
+    Raises:
+        ValueError: For a name none of the builders could have written (CP4b.1 item C9).
+    """
     name = str(task_name)
     if name in TASKS:
         return {'kind': 'qrc', 'model': 'qrc', 'task': name}
@@ -60,7 +64,9 @@ def parse_task_name(task_name: str) -> Dict[str, Optional[str]]:
     prefix, _, suffix = name.partition('_')
     if prefix in BASELINE_MODELS.values() and (suffix == '' or suffix in TASKS):
         return {'kind': 'baseline', 'model': prefix, 'task': suffix or 'stm'}
-    return {'kind': 'unknown', 'model': None, 'task': None}
+    raise ValueError(
+        f'unknown task_name {task_name!r}: not a task, an ablation:<name> or a baseline row'
+    )
 
 
 def _check_task(task: str) -> None:

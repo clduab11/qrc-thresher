@@ -34,6 +34,7 @@ from qrc_thresher.commands import (
     run_handler,
     summary_handler,
 )
+from qrc_thresher.commands.gate import FAMILY_NAMES
 
 logger = logging.getLogger('qrc_thresher')
 
@@ -97,7 +98,7 @@ _DESIGN_TASK = click.option(
 
 
 @cli.command('tune')
-@click.argument('task', type=_TASKS)
+@click.argument('task', type=_TASKS, required=False, default=None)
 @click.option(
     '--config',
     'config_path',
@@ -105,10 +106,12 @@ _DESIGN_TASK = click.option(
     show_default=True,
     help='Config with a tuning block.',
 )
-def tune_cmd(task: str, config_path: str) -> None:
-    """Tune the QRC, the ESN and RKS under one budget and write the tuning record (D011).
+def tune_cmd(task: Optional[str], config_path: str) -> None:
+    """Tune the QRC, the ESN and RKS under one budget and write the tuning records (D011).
 
-    Writes results/tuning/<config_hash>/<task>.json; run, ablation and baseline deploy from it.
+    Without TASK, stm, parity and narma are tuned in one invocation under one sweep_id (the
+    registered run); with TASK, that record alone is rewritten under its own stamp. Writes
+    results/tuning/<config_hash>/<task>.json; run, ablation and baseline deploy from it.
     """
     from qrc_thresher.tuning import tune_handler
 
@@ -190,9 +193,9 @@ def baseline_cmd(task: str, config_path: str, design: str) -> None:
 @click.option(
     '--config',
     'config_path',
-    default='configs/alpha_lite.yaml',
-    show_default=True,
-    help='Experiment config: seed pairs, reservoir (window included) and readout.',
+    default=None,
+    help='Experiment config: seed pairs, reservoir (window included) and readout '
+         '[default: configs/alpha_lite.yaml; required for family, G1, G2, G2.5, G3, G4].',
 )
 @click.option(
     '--model',
@@ -209,7 +212,7 @@ def baseline_cmd(task: str, config_path: str, design: str) -> None:
     show_default=True,
     help='Config whose tuning record supplies design_STM for --model tuned_qrc.',
 )
-def gate_cmd(name: str, config_path: str, model: str, tuning_config: str) -> None:
+def gate_cmd(name: str, config_path: Optional[str], model: str, tuning_config: str) -> None:
     """Evaluate a decision gate.
 
     Gates are machine-checkable kill-gates. Exit code:
@@ -224,6 +227,13 @@ def gate_cmd(name: str, config_path: str, model: str, tuning_config: str) -> Non
     rows of --config (D013, D014), writes COMPARATIVE.v1.<stamp>.json plus one view per member,
     and exits with the named member's code.
     """
+    if config_path is None:
+        if name in FAMILY_NAMES:  # alpha_lite.yaml can never hold a family (CP4b.1 item C9)
+            raise click.UsageError(
+                f'gate {name} needs --config FILE naming the config whose rows and tuning '
+                'records make up the family (for example configs/comparative.yaml)'
+            )
+        config_path = 'configs/alpha_lite.yaml'
     sys.exit(gate_handler(name, model=model, config_path=config_path,
                           tuning_config=tuning_config))
 

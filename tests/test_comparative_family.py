@@ -260,9 +260,17 @@ def _holm_by_hand(raw: dict) -> dict:
     return adjusted
 
 
+@pytest.fixture(scope='module')
+def family():
+    """The default synthetic sweep evaluated once for the module (CP4b.1 item C7; no assertion
+    below changed). ``family['runs']`` is the sweep, ``family['result']`` its evaluation."""
+    runs = _sweep()
+    return {'runs': runs, 'result': _evaluate(runs)}
+
+
 class TestFamilyEvaluation:
-    def test_all_five_members_in_one_pass_with_m_five(self) -> None:
-        result = _evaluate(_sweep())
+    def test_all_five_members_in_one_pass_with_m_five(self, family) -> None:
+        result = family['result']
         assert result['family'] == 'COMPARATIVE' and result['version'] == 1
         assert result['family_size'] == 5 and result['alpha'] == ALPHA
         assert list(result['members']) == MEMBERS
@@ -279,15 +287,15 @@ class TestFamilyEvaluation:
             assert member['adjusted_p'] <= ALPHA
         assert result['protocol_sha256'] == PROTOCOL_SHA256
 
-    def test_verdicts_and_statistics_are_invariant_under_row_order(self) -> None:
-        runs = _sweep()
-        base = _without_timestamps(_evaluate(runs))
+    def test_verdicts_and_statistics_are_invariant_under_row_order(self, family) -> None:
+        runs = family['runs']
+        base = _without_timestamps(family['result'])
         for seed in (1, 2):
             shuffled = _without_timestamps(_evaluate(runs.sample(frac=1, random_state=seed)))
             assert shuffled == base
 
-    def test_an_insufficient_member_contributes_p_one_and_is_not_a_fail(self) -> None:
-        runs = _sweep()
+    def test_an_insufficient_member_contributes_p_one_and_is_not_a_fail(self, family) -> None:
+        runs = family['runs']
         result = _evaluate(runs[runs['task_name'] != 'esn_narma'])
         g4 = result['members']['G4']
         assert g4['result'] == 'INSUFFICIENT_EVIDENCE'
@@ -298,8 +306,8 @@ class TestFamilyEvaluation:
         assert adjusted == pytest.approx(_holm_by_hand(raw))  # m = 5 including the 1.0
         assert all(result['members'][m]['result'] == 'PASS' for m in MEMBERS if m != 'G4')
 
-    def test_a_three_member_family_reproduces_a_holm_known_answer(self) -> None:
-        runs = _sweep()
+    def test_a_three_member_family_reproduces_a_holm_known_answer(self, family) -> None:
+        runs = family['runs']
         runs = runs[~runs['task_name'].isin(['esn_narma', 'ablation:no_entangle'])]
         result = _evaluate(runs)
         members = result['members']
@@ -320,15 +328,15 @@ class TestFamilyEvaluation:
         )
         assert members['G1']['adjusted_p'] == members['G4']['adjusted_p'] == 1.0
 
-    def test_unpaired_rows_make_the_member_insufficient_and_name_the_pair(self) -> None:
-        runs = _sweep()
+    def test_unpaired_rows_make_the_member_insufficient_and_name_the_pair(self, family) -> None:
+        runs = family['runs']
         drop = (runs['task_name'] == 'ablation:haar') & (runs['task_seed'] == 47)
         result = _evaluate(runs[~drop])
         g25 = result['members']['G2.5']
         assert g25['result'] == 'INSUFFICIENT_EVIDENCE' and '(47, 142)' in g25['message']
         assert result['members']['G3']['result'] == 'PASS'
 
-    def test_the_floors(self) -> None:
+    def test_the_floors(self, family) -> None:
         low = _evaluate(_sweep(g2_mean=0.65))
         g2 = low['members']['G2']
         assert g2['adjusted_p'] <= ALPHA and g2['result'] == 'FAIL'
@@ -338,7 +346,7 @@ class TestFamilyEvaluation:
         g4 = high['members']['G4']
         assert g4['adjusted_p'] <= ALPHA and g4['result'] == 'FAIL'
         assert g4['floor']['passed'] is False and g4['floor']['value'] == 0.60
-        ok = _evaluate(_sweep())
+        ok = family['result']
         assert ok['members']['G2']['floor']['passed'] and ok['members']['G4']['floor']['passed']
         assert ok['members']['G3']['floor'] is None
 
@@ -351,9 +359,9 @@ class TestFamilyEvaluation:
         assert g3['p_two_sided'] == pytest.approx(g3['comparison']['p_two_sided'])
         assert g3['raw_p'] > 0.5  # the one-sided p in the registered direction
 
-    def test_g1_needs_the_tuned_g07_verdict(self) -> None:
-        runs = _sweep()
-        passed = _evaluate(runs)['members']['G1']
+    def test_g1_needs_the_tuned_g07_verdict(self, family) -> None:
+        runs = family['runs']
+        passed = family['result']['members']['G1']
         assert passed['result'] == 'PASS' and passed['g07']['result'] == 'PASS'
         assert passed['g07']['json'] == G07_PASS['json']
         assert passed['g07']['sha256'] == G07_PASS['sha256']  # ruling 4: path and hash recorded
@@ -364,9 +372,9 @@ class TestFamilyEvaluation:
         assert missing['result'] == 'INSUFFICIENT_EVIDENCE' and 'G0.7' in missing['message']
         assert missing['raw_p'] == 1.0
 
-    def test_g1_refuses_a_g07_file_from_another_config_or_sweep(self) -> None:
+    def test_g1_refuses_a_g07_file_from_another_config_or_sweep(self, family) -> None:
         # Ruling 4: "newest" is only the discovery rule; the file's hashes must match the rows.
-        runs = _sweep()
+        runs = family['runs']
         other_hash = hashlib.sha256(b'another config').hexdigest()
         foreign = {**G07_PASS, 'model_details': {'tuning_config_hash': other_hash,
                                                   'sweep_id': SWEEP_ID}}
@@ -379,16 +387,16 @@ class TestFamilyEvaluation:
         assert g1['result'] == 'INSUFFICIENT_EVIDENCE'
         assert 'older' in g1['message'] and SWEEP_ID in g1['message']
 
-    def test_g1_reports_the_stm_memory_margin_beside_the_gated_parity_margin(self) -> None:
-        g1 = _evaluate(_sweep())['members']['G1']
+    def test_g1_reports_the_stm_memory_margin_beside_the_gated_parity_margin(self, family) -> None:
+        g1 = family['result']['members']['G1']
         assert g1['comparison']['metric'] == 'accuracy'
         beside = g1['reported']['stm_memory_margin_over_no_entangle']
         assert beside['status'] == 'OK' and beside['metric'] == 'stm_memory'
         assert beside['mean_diff'] < 0  # the synthetic no-entangle rows have more linear memory
         assert 'adjusted_p' not in beside  # reported, never gated
 
-    def test_g3_reports_mc_k0_separately(self) -> None:
-        g3 = _evaluate(_sweep())['members']['G3']
+    def test_g3_reports_mc_k0_separately(self, family) -> None:
+        g3 = family['result']['members']['G3']
         assert g3['reported']['mc_k0'] == {'qrc': pytest.approx(0.7), 'esn': pytest.approx(0.9)}
         assert g3['comparison']['metric'] == 'stm_memory'
 
@@ -400,10 +408,10 @@ class TestFamilyEvaluation:
             assert member['raw_p'] == 1.0
         assert result['members']['G2']['result'] == 'PASS'
 
-    def test_the_default_design_report(self) -> None:
+    def test_the_default_design_report(self, family) -> None:
         # Ruling 1: one compared default (design 'default', w = 2) per member and task, the
         # w = 1 row ('default_w1') reported as a mean; ruling 5: the comparators.
-        result = _evaluate(_sweep())
+        result = family['result']
         for m in MEMBERS:
             default = result['members'][m]['default']
             assert default['status'] == 'OK', (m, default)
@@ -440,9 +448,9 @@ class TestFamilyEvaluation:
         assert g3['default']['p_one_sided'] < ALPHA
         assert g3['result'] == 'FAIL' and g3['baseline_better'] is True
 
-    def test_two_candidate_rows_for_one_pair_make_the_member_insufficient(self) -> None:
+    def test_two_candidate_rows_for_one_pair_make_the_member_insufficient(self, family) -> None:
         # Ruling 1: the evaluator never chooses between two candidate QRC rows for a pair.
-        runs = _sweep()
+        runs = family['runs']
         extra = runs[(runs['task_name'] == 'stm') & (runs['design'] == 'tuned')
                      & (runs['task_seed'] == 45)].copy()
         extra['primary_metric_value'] = extra['primary_metric_value'] + 0.01
@@ -460,19 +468,58 @@ class TestFamilyEvaluation:
         assert g2['default']['status'] == 'INSUFFICIENT_EVIDENCE'  # ... the default table is not
         assert '(43, 138)' in g2['default']['reason']
 
-    def test_rows_of_another_config_or_sweep_are_ignored(self) -> None:
-        runs = _sweep()
+    def test_rows_of_another_config_or_sweep_are_ignored(self, family) -> None:
+        runs = family['runs']
         foreign = runs.copy()
         foreign['sweep_id'] = 'older'
         result = _evaluate(pd.concat([runs, foreign], ignore_index=True))
         assert all(result['members'][m]['result'] == 'PASS' for m in MEMBERS)
         assert result['members']['G3']['n_pairs'] == 12
 
+    def test_coinciding_designs_collapse_as_exact_reruns(self, family) -> None:
+        # CP4b.1 item B6: under one sweep, design_STM(pair) == design_parity(pair) makes
+        # `run parity` and `run parity --design-task stm` write two parity rows with one hash.
+        # Identical values are one exact rerun and collapse; a differing value is a duplicate
+        # candidate and makes both members that read the row INSUFFICIENT, naming the pair.
+        runs = family['runs']
+        pair_rows = (runs['task_name'] == 'parity') & (runs['design'] == 'tuned') \
+            & (runs['task_seed'] == 46)
+        stm_hash = design_hash('stm', (46, 141))
+        design_parity_row = pair_rows & (runs['circuit_hash'] == design_hash('parity', (46, 141)))
+        design_stm_row = pair_rows & (runs['circuit_hash'] == stm_hash)
+        assert design_parity_row.sum() == design_stm_row.sum() == 1
+        coinciding = runs.copy()
+        # design_parity(46/141) happens to be design_STM(46/141): its row carries the STM hash ...
+        coinciding.loc[design_parity_row, 'circuit_hash'] = stm_hash
+        # ... and the rerun reproduced the value exactly.
+        coinciding.loc[design_parity_row, 'primary_metric_value'] = float(
+            coinciding.loc[design_stm_row, 'primary_metric_value'].iloc[0]
+        )
+        # G2 pairs design_parity(pair): its hash for 46/141 is now the STM one.
+        designs = _designs()
+        designs.tuned['parity'][(46, 141)] = stm_hash
+        fam = _family()
+        defaults = dict(g07_tuned=G07_PASS, readout='z_only', config_hash=CONFIG_HASH,
+                        sweep_id=SWEEP_ID, tuning_record_sha=RECORD_SHA)
+        result = fam.evaluate_family(coinciding, fam.load_protocol(), designs, **defaults)
+        for m in ('G1', 'G2'):
+            assert result['members'][m]['result'] == 'PASS', result['members'][m]['message']
+            assert result['members'][m]['n_pairs'] == 12
+        differing = coinciding.copy()
+        differing.loc[design_parity_row, 'primary_metric_value'] += 0.01
+        result = fam.evaluate_family(differing, fam.load_protocol(), designs, **defaults)
+        for m in ('G1', 'G2'):
+            member = result['members'][m]
+            assert member['result'] == 'INSUFFICIENT_EVIDENCE', member
+            assert '(46, 141)' in member['message'] and 'exact rerun' in member['message']
+            assert member['raw_p'] == 1.0
+        assert all(result['members'][m]['result'] == 'PASS' for m in ('G2.5', 'G3', 'G4'))
+
 
 class TestFamilyReport:
-    def test_the_json_carries_the_provenance_and_no_nan(self, tmp_path) -> None:
+    def test_the_json_carries_the_provenance_and_no_nan(self, tmp_path, family) -> None:
         fam = _family()
-        result = _evaluate(_sweep())
+        result = family['result']
         paths = fam.write_family_report(result, tmp_path)
         assert set(paths) == {'family', *MEMBERS}
         family = json.loads(paths['family'].read_text(encoding='utf-8'))
@@ -496,9 +543,9 @@ class TestFamilyReport:
         text = paths['family'].read_text(encoding='utf-8')
         assert 'NaN' not in text and 'Infinity' not in text
 
-    def test_reports_are_timestamped_and_never_overwritten(self, tmp_path) -> None:
+    def test_reports_are_timestamped_and_never_overwritten(self, tmp_path, family) -> None:
         fam = _family()
-        result = _evaluate(_sweep())
+        result = family['result']
         first = fam.write_family_report(result, tmp_path)
         second = fam.write_family_report(result, tmp_path)
         assert first['family'] != second['family'] and first['G3'] != second['G3']

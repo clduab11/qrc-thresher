@@ -17,6 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class TaskConfig(BaseModel):
     """Task configuration."""
 
+    model_config = ConfigDict(extra='forbid')
+
     name: Literal['stm', 'parity', 'narma']
     length: int = Field(ge=100)
     train_frac: float = Field(gt=0, lt=1)
@@ -31,7 +33,10 @@ class ReservoirConfig(BaseModel):
     re-uploads u_{t-(j mod w)} at every layer. w = 1 is today's memoryless circuit. A window
     outside 1..n_qubits is refused. ``encoding_scale`` is the angle-encoding scale alpha of
     RY(alpha * u) (D011); pi is today's circuit and the untuned default.
+
     """
+
+    model_config = ConfigDict(extra='forbid')
 
     backend: Literal['default.qubit', 'lightning.qubit']
     n_qubits: int = Field(ge=2, le=12)
@@ -76,9 +81,11 @@ class BaselineConfig(BaseModel):
 
 
 class AblationConfig(BaseModel):
-    """Ablation study configuration."""
+    """Ablation study configuration (RKS is a baseline, not an ablation; D011)."""
 
-    name: Literal['phase_random', 'no_entangle', 'random_features', 'haar']
+    model_config = ConfigDict(extra='forbid')
+
+    name: Literal['phase_random', 'no_entangle', 'haar']
 
 
 class TrainingConfig(BaseModel):
@@ -86,7 +93,10 @@ class TrainingConfig(BaseModel):
 
     ``washout`` rows [0, washout) are dropped from training and tuning for every model (D012);
     the registered value is 50. ``AlphaLiteConfig`` checks it against the task and reservoir.
+
     """
+
+    model_config = ConfigDict(extra='forbid')
 
     ridge_alphas: List[float]
     cv_folds: int = Field(ge=2, le=10)
@@ -125,6 +135,8 @@ class TuningConfig(BaseModel):
 class ProofConfig(BaseModel):
     """Proof layer configuration."""
 
+    model_config = ConfigDict(extra='forbid')
+
     log_entanglement: bool = True
     log_circuit_hash: bool = True
     log_artifacts: bool = False
@@ -141,7 +153,10 @@ class MeasurementConfig(BaseModel):
     'exact' means exact expectation values. They are an oracle upper bound on what a
     device could measure and are never used for a headline claim. Finite-shot models
     are added when the shot path lands.
+
     """
+
+    model_config = ConfigDict(extra='forbid')
 
     model: Literal['exact'] = 'exact'
 
@@ -167,6 +182,8 @@ def measurement_label(model: str) -> str:
 class SeedsConfig(BaseModel):
     """Seed configuration for reproducibility."""
 
+    model_config = ConfigDict(extra='forbid')
+
     task_seed: int
     reservoir_seed: int
     n_seeds: int = Field(ge=1, le=20)
@@ -180,7 +197,10 @@ class AlphaLiteConfig(BaseModel):
 
     The comparative gates' thresholds live in configs/gates/COMPARATIVE.v1.yaml (D013, D014),
     not here: the former ``gates`` block is gone.
+
     """
+
+    model_config = ConfigDict(extra='forbid')
 
     experiment_name: str
     task: TaskConfig
@@ -197,6 +217,8 @@ class AlphaLiteConfig(BaseModel):
     def _washout_covers_the_padded_rows(self) -> 'AlphaLiteConfig':
         """D012: the washout must cover every zero-padded target row and leave training rows.
 
+        Every config model forbids unknown keys, so a misspelled ``washout`` or
+        ``encoding_scale`` fails here instead of silently defaulting (CP4b.1 item C8).
         Structural minima only: K (task.delay_max), the NARMA-10 zero rows (every task can be
         run from one config, so this always applies), parity_window - 1, window - 1, and at
         least 2 * cv_folds rows in [washout, train_end). Every violation is reported at once.
@@ -204,6 +226,12 @@ class AlphaLiteConfig(BaseModel):
         """
         w = self.training.washout
         task = self.task
+        if task.name == 'stm' and task.delay_max is None:
+            raise ValueError('task.delay_max is required for STM: the washout is checked '
+                             'against it and no default is assumed (D012; CP4b.1 item C8)')
+        if task.name == 'parity' and task.parity_window is None:
+            raise ValueError('task.parity_window is required for parity: the washout is '
+                             'checked against it and no default is assumed (D012)')
         problems = []
         if task.delay_max is not None and w < task.delay_max:
             problems.append(f'at least task.delay_max = {task.delay_max}')
