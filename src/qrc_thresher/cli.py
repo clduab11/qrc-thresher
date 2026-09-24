@@ -2,10 +2,11 @@
 
 Commands:
   health   - Run all health checks.
-  run      - Run a task benchmark.
-  ablation - Run an ablation study.
+  tune     - Tune every model under the matched budget and write the tuning record (D011).
+  run      - Run a task benchmark on every seed pair.
+  ablation - Run a matched ablation of a task on every seed pair.
   baseline - Run the enabled classical baselines on every seed pair.
-  gate     - Evaluate a decision gate.
+  gate     - Evaluate a decision gate (or the comparative family).
   plugins  - List registered plugins.
   perf     - Run lightweight performance benchmarks.
   noise-sweep - Run noise model scaffold sweep.
@@ -78,8 +79,44 @@ def health_cmd(out_dir: str) -> None:
     sys.exit(health_handler(out_dir))
 
 
+_TASKS = click.Choice(['stm', 'parity', 'narma'])
+_DESIGN = click.option(
+    '--design',
+    default='tuned',
+    show_default=True,
+    type=click.Choice(['tuned', 'default']),
+    help='tuned: the tuning record\'s design; default: the untuned defaults (D011).',
+)
+_DESIGN_TASK = click.option(
+    '--design-task',
+    'design_task',
+    default=None,
+    type=_TASKS,
+    help='Deploy another task\'s tuned design (G1(b) runs design_STM on parity; D014).',
+)
+
+
+@cli.command('tune')
+@click.argument('task', type=_TASKS)
+@click.option(
+    '--config',
+    'config_path',
+    default='configs/comparative.yaml',
+    show_default=True,
+    help='Config with a tuning block.',
+)
+def tune_cmd(task: str, config_path: str) -> None:
+    """Tune the QRC, the ESN and RKS under one budget and write the tuning record (D011).
+
+    Writes results/tuning/<config_hash>/<task>.json; run, ablation and baseline deploy from it.
+    """
+    from qrc_thresher.tuning import tune_handler
+
+    sys.exit(tune_handler(task, config_path))
+
+
 @cli.command('run')
-@click.argument('task', type=click.Choice(['stm', 'parity', 'narma']))
+@click.argument('task', type=_TASKS)
 @click.option(
     '--config',
     'config_path',
@@ -87,23 +124,23 @@ def health_cmd(out_dir: str) -> None:
     show_default=True,
     help='Path to YAML config file.',
 )
-@click.option('--seed', default=None, type=int, help='Override task seed from config.')
 @click.option('--workers', default=1, type=int, help='Number of parallel workers.')
-def run_cmd(task: str, config_path: str, seed: Optional[int], workers: int) -> None:
-    """Run a task benchmark and write a run manifest."""
+@_DESIGN
+@_DESIGN_TASK
+def run_cmd(task: str, config_path: str, workers: int, design: str,
+            design_task: Optional[str]) -> None:
+    """Run a task benchmark on every seed pair of the config and write run manifests."""
     if workers > 1:
         from qrc_thresher.commands.run import run_parallel_handler
 
-        sys.exit(run_parallel_handler(task, config_path, seed, workers))
+        sys.exit(run_parallel_handler(task, config_path, workers, design, design_task))
     else:
-        sys.exit(run_handler(task, config_path, seed))
+        sys.exit(run_handler(task, config_path, design, design_task))
 
 
 @cli.command('ablation')
-@click.argument(
-    'name',
-    type=click.Choice(['phase_random', 'no_entangle', 'random_features', 'haar']),
-)
+@click.argument('name', type=click.Choice(['phase_random', 'no_entangle', 'haar']))
+@click.argument('task', type=_TASKS)
 @click.option(
     '--config',
     'config_path',
@@ -111,17 +148,21 @@ def run_cmd(task: str, config_path: str, seed: Optional[int], workers: int) -> N
     show_default=True,
     help='Path to YAML config file.',
 )
-def ablation_cmd(name: str, config_path: str) -> None:
-    """Run a matched ablation on every seed pair of the config (docs/DECISIONS.md D010).
+@_DESIGN
+@_DESIGN_TASK
+def ablation_cmd(name: str, task: str, config_path: str, design: str,
+                 design_task: Optional[str]) -> None:
+    """Run a matched ablation of TASK on every seed pair of the config (D010, D011).
 
-    The ablation inherits the reservoir's seed, readout, window and re-upload schedule; only
-    the tested factor changes. One manifest row is written per seed pair.
+    The ablation inherits the design's seed, readout, window, encoding scale and re-upload
+    schedule; only the tested factor changes. One manifest row is written per seed pair and
+    deployment. RKS is a baseline: see `baseline`.
     """
-    sys.exit(ablation_handler(name, config_path))
+    sys.exit(ablation_handler(name, task, config_path, design, design_task))
 
 
 @cli.command('baseline')
-@click.argument('task', type=click.Choice(['stm', 'narma']))
+@click.argument('task', type=_TASKS)
 @click.option(
     '--config',
     'config_path',
@@ -129,21 +170,21 @@ def ablation_cmd(name: str, config_path: str) -> None:
     show_default=True,
     help='Path to YAML config file.',
 )
-def baseline_cmd(task: str, config_path: str) -> None:
+@_DESIGN
+def baseline_cmd(task: str, config_path: str, design: str) -> None:
     """Run the enabled classical baselines on every seed pair and write manifest rows.
 
-    STM rows are written as task_name 'esn' (metric 'mc'); NARMA-10 rows as 'esn_narma'
-    (metric 'nrmse'). Each row records the search budget. Exit 0 only if every run
-    succeeded.
+    Rows are named by model and task (esn, esn_parity, esn_narma, rks, rks_parity, rks_narma)
+    and record the search budget. Exit 0 only if every run succeeded.
     """
-    sys.exit(baseline_handler(task, config_path))
+    sys.exit(baseline_handler(task, config_path, design))
 
 
 @cli.command('gate')
 @click.argument(
     'name',
     type=click.Choice(
-        ['G0', 'G0.5', 'G0.7', 'G1', 'G2', 'G2.5', 'G3', 'G4', 'G5', 'G6', 'G7']
+        ['G0', 'G0.5', 'G0.7', 'family', 'G1', 'G2', 'G2.5', 'G3', 'G4', 'G5', 'G6', 'G7']
     ),
 )
 @click.option(
@@ -157,24 +198,34 @@ def baseline_cmd(task: str, config_path: str) -> None:
     '--model',
     default='pennylane_qrc',
     show_default=True,
-    type=click.Choice(['pennylane_qrc', 'no_entangle', 'esn_linear', 'esn_nonlinear']),
-    help='Model evaluated by G0.7 (other gates ignore it); no_entangle is the matched ablation.',
+    type=click.Choice(['pennylane_qrc', 'no_entangle', 'tuned_qrc', 'esn_linear', 'esn_nonlinear']),
+    help='Model evaluated by G0.7 (other gates ignore it); no_entangle is the matched ablation, '
+         'tuned_qrc the tuning record\'s design_STM (D011).',
 )
-def gate_cmd(name: str, config_path: str, model: str) -> None:
-    """Evaluate a decision gate from results/runs.csv.
+@click.option(
+    '--tuning-config',
+    'tuning_config',
+    default='configs/comparative.yaml',
+    show_default=True,
+    help='Config whose tuning record supplies design_STM for --model tuned_qrc.',
+)
+def gate_cmd(name: str, config_path: str, model: str, tuning_config: str) -> None:
+    """Evaluate a decision gate.
 
     Gates are machine-checkable kill-gates. Exit code:
         0 = PASS
         1 = FAIL
         2 = INSUFFICIENT_EVIDENCE (not enough data to decide)
 
-    Each gate writes results/gates/<name>.json with the verdict, the
-    contributing run_ids, and the numerical evidence so reviewers can audit
-    the decision against the manifest. G0.7 (memory sanity, pre-registered in
-    configs/gates/G0.7.v1.yaml) instead writes a new timestamped JSON and
-    forgetting-curve figure on every evaluation.
+    G0, G0.5, G5, G6 and G7 write results/gates/<name>.json. G0.7 (memory sanity,
+    pre-registered in configs/gates/G0.7.v1.yaml) writes a new timestamped JSON and
+    forgetting-curve figure on every evaluation. `family` (and any member G1, G2, G2.5, G3, G4)
+    evaluates the comparative family of configs/gates/COMPARATIVE.v1.yaml as a unit on the
+    rows of --config (D013, D014), writes COMPARATIVE.v1.<stamp>.json plus one view per member,
+    and exits with the named member's code.
     """
-    sys.exit(gate_handler(name, model=model, config_path=config_path))
+    sys.exit(gate_handler(name, model=model, config_path=config_path,
+                          tuning_config=tuning_config))
 
 
 @cli.command('plot')

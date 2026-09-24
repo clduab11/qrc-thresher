@@ -10,27 +10,30 @@ from typing import Optional
 
 import numpy as np
 
+FAMILY_NAMES = ('family', 'G1', 'G2', 'G2.5', 'G3', 'G4')
+_EXIT = {'PASS': 0, 'FAIL': 1, 'INSUFFICIENT_EVIDENCE': 2}
+
 
 def gate_handler(
-    name: str, model: str = 'pennylane_qrc', config_path: str = 'configs/alpha_lite.yaml'
+    name: str,
+    model: str = 'pennylane_qrc',
+    config_path: str = 'configs/alpha_lite.yaml',
+    tuning_config: str = 'configs/comparative.yaml',
 ) -> int:
     """Handle gate command. Returns exit code.
 
     ``config_path`` is the experiment config (default: the cwd-relative
-    configs/alpha_lite.yaml); ``model`` is used by G0.7 only.
+    configs/alpha_lite.yaml); ``model`` and ``tuning_config`` are used by G0.7 only.
+    'family' and its members G1, G2, G2.5, G3, G4 evaluate the comparative family of
+    ``config_path`` as a unit (D013, D014; PI ruling 7).
     """
     import pandas as pd
-
-    from qrc_thresher.config import load_config
 
     gates_dir = Path('results') / 'gates'
     gates_dir.mkdir(parents=True, exist_ok=True)
 
-    config = None
-    try:
-        config = load_config(Path(config_path))
-    except Exception:
-        pass
+    if name in FAMILY_NAMES:
+        return _family_command(name, Path(config_path), gates_dir)
 
     if name == 'G0':
         result, evidence, run_ids = _evaluate_gate_g0()
@@ -46,7 +49,9 @@ def gate_handler(
 
     if name == 'G0.7':
         # G0.7 writes a new timestamped JSON and figure per evaluation (never overwrites).
-        result, evidence, run_ids = _evaluate_gate_g07(config_path=Path(config_path), model=model)
+        result, evidence, run_ids = _evaluate_gate_g07(
+            config_path=Path(config_path), model=model, tuning_config=Path(tuning_config)
+        )
         print(f'Gate {name}: {result}')
         print(f"  {evidence['message']}")
         print(f"  json: {evidence['json']}")
@@ -81,17 +86,7 @@ def gate_handler(
     df = pd.read_csv(runs_csv)
     successful = df[df['success'].astype(str).str.lower() == 'true'].copy()
 
-    if name == 'G1':
-        result, evidence, run_ids = _evaluate_gate_g1(successful, config)
-    elif name == 'G2':
-        result, evidence, run_ids = _evaluate_gate_g2(successful, config)
-    elif name == 'G2.5':
-        result, evidence, run_ids = _evaluate_gate_g25(successful, config)
-    elif name == 'G4':
-        result, evidence, run_ids = _evaluate_gate_g4(successful)
-    elif name == 'G3':
-        result, evidence, run_ids = _evaluate_gate_g3(successful)
-    elif name == 'G5':
+    if name == 'G5':
         result, evidence, run_ids = _evaluate_gate_g5(successful)
     elif name == 'G6':
         result, evidence, run_ids = _evaluate_gate_g6(successful)
@@ -105,6 +100,35 @@ def gate_handler(
 
     exit_codes = {'PASS': 0, 'FAIL': 1, 'INSUFFICIENT_EVIDENCE': 2}
     return exit_codes.get(result, 2)
+
+
+def _family_command(name: str, config_path: Path, gates_dir: Path) -> int:
+    """Evaluate the whole family, write the record and the member views, print one member."""
+    from qrc_thresher.gates import comparative
+
+    result, error = comparative.evaluate_config(
+        config_path, Path('results') / 'runs.csv', gates_dir
+    )
+    if error is not None:
+        print(f'Gate {name}: {comparative.INSUFFICIENT}')
+        print(f'  {error}')
+        return 2
+    paths = comparative.write_family_report(result, gates_dir)
+    members = result['members']
+    shown = comparative.MEMBERS if name == 'family' else (name,)
+    for member in shown:
+        entry = members[member]
+        line = (f"Gate {member}: {entry['result']}  (raw p = {entry['raw_p']:.4g}, Holm-adjusted "
+                f"p = {entry['adjusted_p']:.4g}, n = {entry['n_pairs']})")
+        print(line)
+        if entry['message']:
+            print(f"  {entry['message']}")
+        print(f"  json: {paths[member].as_posix()}")
+    print(f"  family: {paths['family'].as_posix()}")
+    if name == 'family':
+        worst = max((members[m]['result'] for m in comparative.MEMBERS), key=_EXIT.__getitem__)
+        return _EXIT[worst]
+    return _EXIT[members[name]['result']]
 
 
 def _latest_health_report() -> Optional[dict]:
@@ -160,143 +184,67 @@ def _metric_values(df, metric_name: str) -> list:
     return [float(v) for v in vals.tolist()]
 
 
-def _evaluate_gate_g1(successful, config=None) -> tuple[str, dict, list]:
-    """G1: STM MC > threshold AND >=margin_pct above no_entangle ablation MC."""
-    stm_mc_threshold = 1.0
-    margin_pct_threshold = 0.20
-    if config is not None and config.gates is not None:
-        stm_mc_threshold = config.gates.G1_stm_mc_threshold
-        margin_pct_threshold = config.gates.G1_margin_pct
+def _family_member(name: str, config_path=None) -> tuple[str, dict, list]:
+    """One member's view of the comparative family (D013, D014; PI ruling 7).
 
-    qrc = _filter_task(successful, 'stm')
-    qrc_mcs = _metric_values(qrc, 'mc')
-    abl = _filter_task(successful, 'ablation:no_entangle')
-    abl_mcs = _metric_values(abl, 'mc')
+    The family is always evaluated as a unit (m = 5). The entry points G1, G2, G2.5, G3 and G4
+    are kept as thin wrappers over this function so ``pyproject`` stays untouched (debt).
+    Returns (result, member dict, run_ids) without writing anything; the gate command writes
+    the family JSON and the member views.
+    """
+    from qrc_thresher.gates import comparative
 
-    n_seeds = len(qrc_mcs)
-    evidence = {
-        'qrc_n_runs': n_seeds,
-        'no_entangle_n_runs': len(abl_mcs),
-        'qrc_mc_mean': float(sum(qrc_mcs) / n_seeds) if qrc_mcs else None,
-        'no_entangle_mc_mean': (
-            float(sum(abl_mcs) / len(abl_mcs)) if abl_mcs else None
-        ),
-    }
-    run_ids = qrc['run_id'].astype(str).tolist() + abl['run_id'].astype(str).tolist()
-
-    if n_seeds < 5 or not abl_mcs:
-        evidence['message'] = (
-            'Need >=5 STM runs and >=1 no_entangle ablation run with '
-            'primary_metric_value=mc.'
-        )
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
-
-    qrc_mean = evidence['qrc_mc_mean']
-    abl_mean = evidence['no_entangle_mc_mean']
-    margin_pct = (qrc_mean - abl_mean) / abl_mean if abl_mean and abl_mean > 0 else 0.0
-    evidence['margin_pct'] = margin_pct
-    if qrc_mean > stm_mc_threshold and margin_pct >= margin_pct_threshold:
-        return 'PASS', evidence, run_ids
-    return 'FAIL', evidence, run_ids
-
-
-def _evaluate_gate_g2(successful, config=None) -> tuple[str, dict, list]:
-    """G2: parity accuracy > threshold AND random_features ablation accuracy < max."""
-    accuracy_threshold = 0.70
-    random_features_max = 0.60
-    if config is not None and config.gates is not None:
-        accuracy_threshold = config.gates.G2_accuracy_threshold
-        random_features_max = config.gates.G2_random_features_max
-
-    qrc = _filter_task(successful, 'parity')
-    qrc_accs = _metric_values(qrc, 'accuracy')
-    abl = _filter_task(successful, 'ablation:random_features')
-    abl_accs = _metric_values(abl, 'accuracy')
-
-    n_seeds = len(qrc_accs)
-    evidence = {
-        'qrc_n_runs': n_seeds,
-        'random_features_n_runs': len(abl_accs),
-        'qrc_accuracy_mean': (
-            float(sum(qrc_accs) / n_seeds) if qrc_accs else None
-        ),
-        'random_features_accuracy_mean': (
-            float(sum(abl_accs) / len(abl_accs)) if abl_accs else None
-        ),
-    }
-    run_ids = qrc['run_id'].astype(str).tolist() + abl['run_id'].astype(str).tolist()
-
-    if n_seeds < 5:
-        evidence['message'] = 'Need >=5 parity runs with primary_metric_value=accuracy.'
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
-
-    qrc_mean = evidence['qrc_accuracy_mean']
-    abl_mean = evidence['random_features_accuracy_mean']
-    if abl_mean is None:
-        evidence['message'] = (
-            'Need at least one parity-task random_features ablation run '
-            'with accuracy logged.'
-        )
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
-
-    if qrc_mean > accuracy_threshold and abl_mean < random_features_max:
-        return 'PASS', evidence, run_ids
-    return 'FAIL', evidence, run_ids
-
-
-def _evaluate_gate_g25(successful, config=None) -> tuple[str, dict, list]:
-    """G2.5: full QRC outperforms Haar-random ablation by >=effect_se on STM-MC or parity-acc."""
-    effect_se_threshold = 1.0
-    if config is not None and config.gates is not None:
-        effect_se_threshold = config.gates.G25_effect_se
-
-    qrc_stm = _metric_values(_filter_task(successful, 'stm'), 'mc')
-    haar = _metric_values(_filter_task(successful, 'ablation:haar'), 'mc')
-
-    evidence: dict = {
-        'qrc_stm_n_runs': len(qrc_stm),
-        'haar_n_runs': len(haar),
-    }
-    run_ids = (
-        _filter_task(successful, 'stm')['run_id'].astype(str).tolist()
-        + _filter_task(successful, 'ablation:haar')['run_id'].astype(str).tolist()
+    path = Path(config_path) if config_path is not None else Path('configs') / 'comparative.yaml'
+    result, error = comparative.evaluate_config(
+        path, Path('results') / 'runs.csv', Path('results') / 'gates'
     )
+    if error is not None:
+        return comparative.INSUFFICIENT, {'gate': name, 'message': error}, []
+    member = result['members'][name]
+    run_ids = list(member['comparison'].get('run_ids', []))
+    return member['result'], member, run_ids
 
-    if len(qrc_stm) < 3 or len(haar) < 3:
-        evidence['message'] = 'Need >=3 STM runs and >=3 Haar ablation runs.'
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
 
-    qrc_mean = sum(qrc_stm) / len(qrc_stm)
-    haar_mean = sum(haar) / len(haar)
-    qrc_var = sum((v - qrc_mean) ** 2 for v in qrc_stm) / max(len(qrc_stm) - 1, 1)
-    haar_var = sum((v - haar_mean) ** 2 for v in haar) / max(len(haar) - 1, 1)
-    pooled_se = math.sqrt(qrc_var / len(qrc_stm) + haar_var / len(haar))
-    evidence['qrc_stm_mean'] = qrc_mean
-    evidence['haar_stm_mean'] = haar_mean
-    evidence['pooled_se'] = pooled_se
-    evidence['delta'] = qrc_mean - haar_mean
+def _evaluate_gate_g1(successful=None, config=None, config_path=None) -> tuple[str, dict, list]:
+    """G1 (D014): thin wrapper over the comparative family; see ``_family_member``."""
+    return _family_member('G1', config_path)
 
-    if pooled_se == 0:
-        evidence['message'] = 'Zero pooled standard error; check inputs.'
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
 
-    if (qrc_mean - haar_mean) >= effect_se_threshold * pooled_se:
-        return 'PASS', evidence, run_ids
-    return 'FAIL', evidence, run_ids
+def _evaluate_gate_g2(successful=None, config=None, config_path=None) -> tuple[str, dict, list]:
+    """G2 (D014): thin wrapper over the comparative family; see ``_family_member``."""
+    return _family_member('G2', config_path)
+
+
+def _evaluate_gate_g25(successful=None, config=None, config_path=None) -> tuple[str, dict, list]:
+    """G2.5 (D014): thin wrapper over the comparative family; see ``_family_member``."""
+    return _family_member('G2.5', config_path)
 
 
 # G0.5 cases (docs/DECISIONS.md D010): (n_qubits, depth, seed), each at every distinct window
-# in {1, 2, n} and both readouts, over G05_N_STEPS steps that include the zero-padded rows.
+# in {1, 2, n} and both readouts, over G05_N_STEPS steps that include the zero-padded rows, at
+# the encoding scale pi.
 G05_TRIPLES = ((2, 2, 2026), (4, 3, 137), (5, 4, 7))
 G05_N_STEPS = 6
 G05_READOUTS = ('z_only', 'z_and_zz')
+# The registered scale cases (D011): scale in {pi/4, pi/2, 3pi/4} on (4, 3, 137) at every window
+# in {1, 2, 4} with both readouts, 18 cases, separate from G05_TRIPLES.
+G05_SCALES = (math.pi / 4, math.pi / 2, 3 * math.pi / 4)
+G05_SCALE_CASES = tuple(
+    (4, 3, 137, window, readout, scale)
+    for scale in G05_SCALES
+    for window in (1, 2, 4)
+    for readout in G05_READOUTS
+)
 
 
-def _g05_case(n_qubits: int, depth: int, seed: int, window: int, readout: str) -> dict:
+def _g05_case(
+    n_qubits: int, depth: int, seed: int, window: int, readout: str,
+    encoding_scale: float = math.pi,
+) -> dict:
     """One G0.5 case: PennyLane (the production reservoir) against an independent Qiskit build.
 
     The angles come from build_reservoir_params with default_rng(seed); the inputs are the next
-    G05_N_STEPS draws from that generator, Uniform(-1, 1).
+    G05_N_STEPS draws from that generator, Uniform(-1, 1); both sides encode at encoding_scale.
     """
     from qrc_thresher.reservoirs import windowed_qrc
     from qrc_thresher.reservoirs.pennylane_qrc import build_reservoir_params
@@ -307,10 +255,15 @@ def _g05_case(n_qubits: int, depth: int, seed: int, window: int, readout: str) -
         n_qubits=n_qubits, depth=depth, readout=readout, backend='default.qubit', rng=rng
     )
     u = rng.uniform(-1.0, 1.0, size=G05_N_STEPS)
-    reservoir = windowed_qrc.WindowedReservoir(params=params, window=window, reservoir_seed=seed)
+    reservoir = windowed_qrc.WindowedReservoir(
+        params=params, window=window, reservoir_seed=seed, encoding_scale=encoding_scale
+    )
     pennylane_vals = np.asarray(reservoir.features(u), dtype=np.float64)
     qiskit_vals = np.asarray(
-        qiskit_features(u, params.thetas, params.phis, n_qubits, depth, window, readout),
+        qiskit_features(
+            u, params.thetas, params.phis, n_qubits, depth, window, readout,
+            encoding_scale=encoding_scale,
+        ),
         dtype=np.float64,
     )
     if pennylane_vals.shape != qiskit_vals.shape:
@@ -324,6 +277,7 @@ def _g05_case(n_qubits: int, depth: int, seed: int, window: int, readout: str) -
         'seed': int(seed),
         'window': int(window),
         'readout': str(readout),
+        'encoding_scale': float(encoding_scale),
         'n_steps': int(G05_N_STEPS),
         'n_zero_padded_rows': int(window - 1),
         'n_features': int(pennylane_vals.shape[1]),
@@ -344,6 +298,9 @@ def _evaluate_gate_g05() -> tuple[str, dict, list]:
             for n_qubits, depth, seed in G05_TRIPLES
             for window in sorted({1, 2, n_qubits})
             for readout in G05_READOUTS
+        ] + [
+            _g05_case(n_qubits, depth, seed, window, readout, encoding_scale=scale)
+            for n_qubits, depth, seed, window, readout, scale in G05_SCALE_CASES
         ]
         evidence['cases'] = cases
         evidence['n_cases'] = len(cases)
@@ -359,11 +316,13 @@ def _evaluate_gate_g07(
     config_path: Optional[Path] = None,
     out_dir: Optional[Path] = None,
     model: str = 'pennylane_qrc',
+    tuning_config: Optional[Path] = None,
 ) -> tuple[str, dict, list]:
     """G0.7: memory sanity gate (pre-registered v1) on the configured reservoir.
 
-    ``model`` selects the configured PennyLane reservoir (default) or a fixed ESN preset
-    ('esn_linear', 'esn_nonlinear'; docs/DECISIONS.md D009).
+    ``model`` selects the configured PennyLane reservoir (default), its no_entangle ablation,
+    the tuning record's design_STM ('tuned_qrc'; the record of ``tuning_config``, D011) or a
+    fixed ESN preset ('esn_linear', 'esn_nonlinear'; docs/DECISIONS.md D009).
 
     The protocol is configs/gates/G0.7.v1.yaml. Every evaluation writes a new
     timestamped JSON and forgetting-curve figure under results/gates/, never
@@ -373,7 +332,20 @@ def _evaluate_gate_g07(
     from qrc_thresher.gates import g07
 
     cfg = load_config(config_path or Path('configs/alpha_lite.yaml'))
-    result = g07.evaluate_config(cfg, model=model)
+    tuning_record = None
+    if model == 'tuned_qrc':
+        from qrc_thresher.tuning import TuningRecordMissing, load_record
+
+        tuning_path = Path(tuning_config or Path('configs') / 'comparative.yaml')
+        try:
+            tuning_record = load_record(tuning_path, 'stm')
+        except TuningRecordMissing as exc:
+            return 'INSUFFICIENT_EVIDENCE', {
+                'message': str(exc), 'stm_clause': 'INSUFFICIENT_EVIDENCE',
+                'parity_clause': 'INSUFFICIENT_EVIDENCE', 'measurement_label': '',
+                'json': '', 'figure': '',
+            }, []
+    result = g07.evaluate_config(cfg, model=model, tuning_record=tuning_record)
     paths = g07.write_report(result, out_dir or Path('results') / 'gates')
     evidence = {
         'message': result['message'],
@@ -386,104 +358,14 @@ def _evaluate_gate_g07(
     return result['result'], evidence, []
 
 
-def _evaluate_gate_g3(successful) -> tuple[str, dict, list]:
-    """G3: QRC vs Best ESN with Holm-Bonferroni correction."""
-    from scipy import stats as scipy_stats
-
-    from qrc_thresher.metrics.stats import holm_bonferroni
-
-    qrc = _filter_task(successful, 'stm')
-    esn = _filter_task(successful, 'esn')
-
-    qrc_mcs = _metric_values(qrc, 'mc')
-    esn_vals = _metric_values(esn, 'mc')
-
-    n_qrc = len(qrc_mcs)
-    n_esn = len(esn_vals)
-
-    run_ids = qrc['run_id'].astype(str).tolist() + esn['run_id'].astype(str).tolist()
-
-    evidence: dict = {
-        'qrc_stm_n_runs': n_qrc,
-        'esn_n_runs': n_esn,
-        'qrc_mc_mean': float(sum(qrc_mcs) / n_qrc) if qrc_mcs else None,
-        'esn_val_mean': float(sum(esn_vals) / n_esn) if esn_vals else None,
-    }
-
-    if n_qrc < 5:
-        evidence['message'] = 'Need >=5 STM (QRC) runs with primary_metric_value=mc.'
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
-
-    if n_esn < 5:
-        evidence['message'] = (
-            'ESN baseline runs must be logged first. '
-            'Run ESN benchmark and ensure results are appended to runs.csv '
-            'with task_name="esn" and primary_metric_name="mc".'
-        )
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
-
-    qrc_mean = evidence['qrc_mc_mean']
-    esn_mean = evidence['esn_val_mean']
-
-    qrc_arr = np.array(qrc_mcs)
-    esn_arr = np.array(esn_vals)
-
-    min_len = min(len(qrc_arr), len(esn_arr))
-    qrc_arr = qrc_arr[:min_len]
-    esn_arr = esn_arr[:min_len]
-
-    diff = qrc_arr - esn_arr
-    _, p_two_sided = scipy_stats.ttest_rel(qrc_arr, esn_arr)
-    p_one_sided = p_two_sided / 2.0 if np.mean(diff) > 0 else 1.0 - (p_two_sided / 2.0)
-
-    adjusted_p = holm_bonferroni([p_one_sided])
-
-    min_adjusted_p = adjusted_p[0]
-    evidence['raw_p_value'] = p_one_sided
-    evidence['adjusted_p_value'] = adjusted_p[0]
-    evidence['qrc_mc_mean'] = float(np.mean(qrc_arr))
-    evidence['esn_val_mean'] = float(np.mean(esn_arr))
-    evidence['delta'] = float(np.mean(qrc_arr) - np.mean(esn_arr))
-
-    if qrc_mean > esn_mean and min_adjusted_p < 0.05:
-        return 'PASS', evidence, run_ids
-    return 'FAIL', evidence, run_ids
+def _evaluate_gate_g3(successful=None, config=None, config_path=None) -> tuple[str, dict, list]:
+    """G3 (D014): thin wrapper over the comparative family; see ``_family_member``."""
+    return _family_member('G3', config_path)
 
 
-def _evaluate_gate_g4(successful) -> tuple[str, dict, list]:
-    """G4: QRC NARMA-10 NRMSE < ESN NARMA-10 NRMSE."""
-    qrc = _filter_task(successful, 'narma')
-    esn = successful[successful['task_name'].astype(str) == 'esn_narma']
-
-    qrc_nrmses = _metric_values(qrc, 'nrmse')
-    esn_nrmses = _metric_values(esn, 'nrmse')
-
-    n_qrc = len(qrc_nrmses)
-    n_esn = len(esn_nrmses)
-    evidence: dict = {
-        'qrc_narma_n_runs': n_qrc,
-        'esn_narma_n_runs': n_esn,
-        'qrc_nrmse_mean': float(sum(qrc_nrmses) / n_qrc) if qrc_nrmses else None,
-        'esn_nrmse_mean': float(sum(esn_nrmses) / n_esn) if esn_nrmses else None,
-    }
-    run_ids = qrc['run_id'].astype(str).tolist() + esn['run_id'].astype(str).tolist()
-
-    if n_qrc < 5:
-        evidence['message'] = 'Need >=5 NARMA QRC runs with primary_metric_value=nrmse.'
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
-    if n_esn < 5:
-        evidence['message'] = 'Need >=5 NARMA ESN runs with primary_metric_value=nrmse.'
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
-
-    qrc_mean = evidence['qrc_nrmse_mean']
-    esn_mean = evidence['esn_nrmse_mean']
-    if qrc_mean is None or esn_mean is None:
-        evidence['message'] = 'NARMA runs found but no nrmse values logged.'
-        return 'INSUFFICIENT_EVIDENCE', evidence, run_ids
-
-    if qrc_mean < esn_mean:
-        return 'PASS', evidence, run_ids
-    return 'FAIL', evidence, run_ids
+def _evaluate_gate_g4(successful=None, config=None, config_path=None) -> tuple[str, dict, list]:
+    """G4 (D014): thin wrapper over the comparative family; see ``_family_member``."""
+    return _family_member('G4', config_path)
 
 
 def _evaluate_gate_g5(successful) -> tuple[str, dict, list]:
@@ -507,7 +389,7 @@ def _evaluate_gate_g5(successful) -> tuple[str, dict, list]:
 
     for backend in backends:
         be_data = stm_data[stm_data['backend_device'].astype(str) == backend]
-        mcs = _metric_values(be_data, 'mc')
+        mcs = _metric_values(be_data, 'stm_memory')  # k >= 1 (D013; PI ruling 10)
         if mcs:
             mc_by_backend[str(backend)] = {
                 'mean': float(np.mean(mcs)),
@@ -515,7 +397,7 @@ def _evaluate_gate_g5(successful) -> tuple[str, dict, list]:
                 'values': mcs,
             }
 
-    evidence['mc_by_backend'] = mc_by_backend
+    evidence['stm_memory_by_backend'] = mc_by_backend
 
     if len(mc_by_backend) < 2:
         if len(mc_by_backend) == 1:
