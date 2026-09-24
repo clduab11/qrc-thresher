@@ -25,6 +25,21 @@ All tasks are synthetic, deterministic, and seeded via `numpy.random.Generator`.
 - **Default**: $d \in \{1, 2, 3, 5\}$.
 - **Implementation**: `src/qrc_thresher/tasks/temporal_parity.py`.
 
+**Single-arm accuracy is two-tailed noise for an additive readout (disclosure, D016).** A
+readout that is linear in the inputs of the window carries no population signal about XOR: the
+fitted slopes are finite-sample noise, and thresholding them yields a held-out accuracy that is
+not centred on chance. With $d = 2$ the four equiprobable input cells take one linear score
+each ($c$, $c + a$, $c + b$, $c + a + b$), so a threshold classifies whole cells and the two
+mixed (target 1) cells can never be separated from both pure (target 0) cells at once: up to
+0.75 when one pure cell lands on the right side of the threshold, as low as 0.25 when one pure
+cell sits alone on the wrong side (derivation in D016). D010 recorded the upper tail; CP3's `esn_linear` run at task_seed 43
+(window-2 parity, 48/150 = 0.32; confusion TP 14, FP 50, FN 52, TN 34; ridge $\alpha$ = 1.0
+where the other seeds collapse to a constant at $\alpha$ = 100) is the lower tail. Three things
+make this harmless for the gates: the permutation null of G0.7 covers both tails (p = 1.0 for
+that seed), the paired comparisons of the family cancel it by seed, and the G2 floor at 0.70 sits
+above the upper tail. Readers of the default table will see sub-0.5 single-arm accuracies; this
+is why, and they are never a claim.
+
 ### 1.3 NARMA-10 (Phase 1.5, gated behind G3)
 
 - **Input**: $u_t \sim \text{Uniform}(0, 0.5)$.

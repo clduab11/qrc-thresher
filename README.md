@@ -50,8 +50,10 @@ qrc-thresher run stm --config configs/alpha_lite.yaml --workers 4   # parallel s
 Other commands:
 
 ```bash
-qrc-thresher ablation no_entangle --config configs/alpha_lite.yaml
-qrc-thresher gate G1                    # evaluate a decision gate
+qrc-thresher ablation no_entangle stm --config configs/alpha_lite.yaml
+qrc-thresher gate G0.7 --config configs/alpha_lite.yaml   # a decision gate
+qrc-thresher tune --config configs/comparative.yaml       # tuning records for the family
+qrc-thresher gate family --config configs/comparative.yaml
 qrc-thresher plugins                    # list discovered plugins
 qrc-thresher perf --iterations 5        # micro-benchmarks
 qrc-thresher noise-sweep                # Aer noise-model sweep scaffold

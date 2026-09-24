@@ -877,3 +877,94 @@ so Chris can reverse it. Items Chris rejects are to be reverted before the CP4b 
 **Decided by**: builder, 2026-09-24, for PI review with the CP4b report.
 
 ---
+
+## 2026-09-24: D016 — CP4b.1: integrity fixes, one sweep id, hygiene, and the disclosures
+
+**Decision**: The PI accepts D015 as written, with its first item (per-record sweep ids)
+superseded for the registered run by B.6 below. The referee's two passes over the CP4b modules
+(the PI's read of `gates/comparative.py` and `metrics/paired.py`: no verdict-affecting defect;
+an adversarial review of the rest) produced the items below, each implemented with a test.
+`configs/gates/COMPARATIVE.v1.yaml` and `configs/gates/G0.7.v1.yaml` are untouched; nothing is
+re-pinned.
+
+A. Integrity
+- A1. The deployed QRC equals the validated one, by hash. `deploy.qrc_deployments` rebuilds
+  design(pair) from the record's (depth, window, scale) and the pair's reservoir seed and refuses
+  it (`DesignHashMismatch`, naming the pair and both hashes) unless the rebuilt circuit hash is
+  the record's; the matched ablation is built only after that check on the design's own hash.
+  `gates/g07.tuned_feature_map` does the same and records the built hash with
+  `hash_verified: true`. `run`, `ablation` and `gate G0.7 --model tuned_qrc` refuse a tampered
+  record and write nothing. ESN and RKS already refused a mismatch.
+- A2. `selection_scope: train_cv` is structural. `tuning.select_configuration` receives only
+  the training rows (`targets[:train_end]`; every candidate's feature matrix is built on
+  `u[:train_end]`, which for these causal reservoirs equals the first train_end rows of the full
+  matrix); it has no `train_end` argument and no assertion. Poisoning every row at or beyond
+  train_end with NaN leaves the winners, every score and `record_sha256` unchanged. The record
+  also carries `selection_rows = [washout, train_end)`.
+- A3. A failed runs.csv write fails the run. `append_to_csv` raises `RunsCsvWriteError` naming
+  the path; `ExperimentDB.insert` writes runs.csv before the database, so a failure leaves no
+  row anywhere; `run`, `ablation` and `baseline` exit 1 with the message.
+- A4. A missing record, an absent pair, a hash mismatch or an unusable design flag is resolved
+  for every pair before the first run (`deploy.resolve_deployments`); the writers exit 1 with the
+  message and write nothing. The former failure rows (`design=default`, `circuit_hash=n/a`) no
+  longer exist.
+- A5. The family JSON's `git_commit` is `proof.run_manifest._git_commit_hash()`, with `-dirty`
+  when the tree has changes, as every manifest row records it.
+
+B. One sweep id
+- B6. `qrc-thresher tune --config FILE` (TASK omitted) tunes stm, parity and narma in one
+  invocation and stamps one `sweep_id` across the three records; each record keeps its own
+  `record_sha256`. `tune TASK` remains for reruns and stamps its own record. The family
+  evaluator echoes one `sweep_id` when the three records agree and falls back to the
+  `{task: stamp}` map of D015 otherwise. Under one stamp, design_STM(pair) and
+  design_parity(pair) may coincide: `run parity` and `run parity --design-task stm` then write
+  two parity rows with one hash, which collapse as exact reruns when their values agree and make
+  the member INSUFFICIENT, naming the pair, when they differ (`metrics.paired._collapse`).
+  The registered CP4c sequence therefore starts with one `tune --config configs/comparative.yaml`.
+
+C. Hygiene
+- C7. One evaluated family per synthetic sweep is shared across `TestFamilyEvaluation`
+  (module-scoped fixture, no assertion changed). Linux per-file times before this: family 14.8 s,
+  tuning 14.2 s, commands 7.9 s, washout 5.3 s, encoding 3.7 s, schema 2.6 s, paired 2.0 s; the
+  15 s host budget is retired.
+- C8. Every config model forbids unknown keys, so a misspelled `washout` or `encoding_scale`
+  fails validation. An STM config must set `task.delay_max` and a parity config
+  `task.parity_window`; `tuning.task_data` refuses to run STM or parity from a config that omits
+  them (no silent K = 20 or d = 3).
+- C9. `task_names.parse_task_name` raises on an unknown name. `AblationConfig.name` drops
+  `random_features` (RKS is a baseline; D011). `--design default` and `--design-task` on a
+  config without a tuning block are errors. `gate family` and `gate G1..G4/G2.5` require an
+  explicit `--config`. `summary` writes `n/a`, not `nan`, for a group without values.
+
+**Cross-environment reproduction**: the CP3 G0.7 v1 findings on both ESN presets (S, accuracy,
+p and the null q95 for every seed) reproduce to every printed digit on Linux / Python 3.11 /
+numpy 2.4.6 from the same `uv.lock`, against the sandbox's Windows / Python 3.13 run. The CP4b
+suite is 403 passed / 2 deselected in three environments (sandbox 197 s, host 130 s,
+Linux 110 s).
+
+**Parity accuracy disclosure** (METHODOLOGY §1.2): an additive readout carries no population
+signal about XOR, so its fitted slopes are finite-sample noise and the thresholded accuracy has a
+two-sided pathology. Derivation for d = 2: the four input cells (u_{t-1}, u_t) are equiprobable;
+the target is 1 on the two mixed cells and 0 on the two pure cells. A linear score
+s = a u_{t-1} + b u_t + c takes the values c, c + a, c + b, c + a + b, one per cell, so a
+threshold classifies whole cells. The two mixed cells can never be separated from both pure
+cells at once (c + a and c + b lie between c and c + a + b when a and b share a sign, and are
+the extremes otherwise). Best case: both mixed cells above the threshold with one pure cell
+below, three cells right (0.75). Worst case: one pure cell alone above the threshold, both mixed
+cells and the other pure cell below, one cell right (0.25). Chance (0.50) is the centre of this
+range, not its floor, and a finite test set scatters the observed accuracy around whichever cell
+pattern the noisy slopes produced. D010
+recorded the upper tail; CP3's `esn_linear` at task_seed 43 (window-2 parity, 48/150 = 0.32;
+confusion TP 14, FP 50, FN 52, TN 34; ridge alpha = 1.0 where the other seeds collapse to a
+constant at alpha = 100) is the lower tail. The permutation null covers both tails (p = 1.0
+there), the paired family comparisons cancel it by seed, and the G2 floor at 0.70 sits above it;
+sub-0.5 single-arm accuracies in the default table are this, not a finding.
+
+**BUILD_SPEC drift**: §17 and Appendix F still showed `run --seed` / `ablation --seed` (removed
+by D010/D013) and a gate list without `family`; they now show the CP4 commands (every seed pair
+from the config; `ablation NAME TASK`; `tune`; `baseline`; `gate family`), with a v1.1 line in
+the changelog. README likewise.
+
+**Decided by**: PI, 2026-09-24, in the CP4b.1 instructions; implemented by the builder.
+
+---

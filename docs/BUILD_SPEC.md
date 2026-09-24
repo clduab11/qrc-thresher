@@ -731,9 +731,11 @@ The Phase 1 stub uses schema v1.1 from day one. There is no v1.0 to migrate.
 The CLI lives in `src/qrc_thresher/cli.py` and is exposed via `python -m qrc_thresher.cli`. Commands (Click-based):
 
 - `qrc-thresher health [--out-dir DIR]` — Run G0 health checks; exit 0 on full pass.
-- `qrc-thresher run TASK [--config PATH] [--seed INT]` — Execute a single task benchmark (TASK ∈ {stm, parity, narma}); writes a manifest row.
-- `qrc-thresher ablation NAME [--config PATH] [--seed INT]` — Run an ablation (NAME ∈ {phase_random, no_entangle, random_features, haar}); writes a manifest row.
-- `qrc-thresher gate NAME` — Evaluate a gate (NAME ∈ {G0, G0.5, G1, G2, G2.5, G3, G4, G5}); writes `results/gates/<name>.json`.
+- `qrc-thresher tune [TASK] [--config PATH]` — Tune the QRC, the ESN and RKS under one matched budget (D011) and write `results/tuning/<config_hash>/<task>.json`; without TASK the three tasks are tuned under one `sweep_id` (D016).
+- `qrc-thresher run TASK [--config PATH] [--workers N] [--design {tuned,default}] [--design-task TASK]` — Run a task benchmark (TASK ∈ {stm, parity, narma}) on every seed pair of the config; one manifest row per pair and deployment. There is no `--seed`: the pairs come from the config (D010, D013).
+- `qrc-thresher ablation NAME TASK [--config PATH] [--design {tuned,default}] [--design-task TASK]` — Run a matched ablation (NAME ∈ {phase_random, no_entangle, haar}; RKS is a baseline) of TASK on every seed pair; one row per pair and deployment.
+- `qrc-thresher baseline TASK [--config PATH] [--design {tuned,default}]` — Run the enabled classical baselines on every seed pair (rows `esn`, `esn_parity`, `esn_narma`, `rks`, `rks_parity`, `rks_narma`).
+- `qrc-thresher gate NAME [--config PATH] [--model M] [--tuning-config PATH]` — Evaluate a gate (NAME ∈ {G0, G0.5, G0.7, family, G1, G2, G2.5, G3, G4, G5, G6, G7}). G0, G0.5, G5–G7 write `results/gates/<name>.json`; G0.7 and the family write timestamped JSONs and never overwrite. `family` (and any member G1–G4, G2.5) evaluates the comparative family of `--config` as one unit (D013, D014) and needs an explicit `--config`.
 - `qrc-thresher plot RUN_ID [--out DIR]` — Generate figures for a run.
 - `qrc-thresher summary [--phase PHASE]` — Aggregate `runs.csv` into a markdown report under `results/summaries/`.
 
@@ -1199,6 +1201,7 @@ When all boxes are checked, the release is *gated*. The harness has discharged i
 
 **Changelog:**
 - 2026-05-01 — v1.0 — Initial canonical BUILD_SPEC.md authored (Forge-1) and validated (Forge-2). 31 sections + appendices A–D + MG register MG1–MG10 + gates G0–G7.
+- 2026-09-24 — v1.1 — §17 and Appendix F brought to the CP4 CLI (D010, D011, D013, D016): `run`/`ablation` run every seed pair of the config (no `--seed`), `ablation NAME TASK`, `tune`, `baseline`, `gate family` and the `--design`/`--design-task`/`--tuning-config` flags; the gate list gains G0.7, G6, G7 and `family`; RKS leaves the ablation list.
 
 *End of BUILD_SPEC.md.*
 
@@ -1327,7 +1330,7 @@ A reviewer's time is bounded. We recommend the following review path:
 
 1. **30 seconds.** Read the abstract template (§26.4) of the candidate result. Confirm it is one of {positive, negative, inconclusive} and that no forbidden phrasing (§26.5) is used.
 2. **2 minutes.** Run `qrc-thresher health`. Confirm exit code 0.
-3. **5 minutes.** Run `qrc-thresher run stm --config configs/alpha_lite.yaml --seed 0`. Confirm a row appears in `results/runs.csv`. Confirm `qrc-thresher gate G1` runs and produces `results/gates/G1.json`.
+3. **5 minutes.** Run `qrc-thresher run stm --config configs/alpha_lite.yaml`. Confirm one row per seed pair appears in `results/runs.csv`. Confirm `qrc-thresher gate G0.7 --config configs/alpha_lite.yaml` runs and writes a timestamped `results/gates/G0.7.pennylane_qrc.<stamp>.json` (the comparative family needs `configs/comparative.yaml`, its tuning records and all its arms; see Appendix F.2).
 4. **15 minutes.** Read the abstract, the headline table T1, and the ablation table T3 in the manuscript. Confirm every cell traces to a manifest row.
 5. **30 minutes.** Read this BUILD_SPEC.md, the `docs/METHODOLOGY.md` companion, and `docs/REFERENCES.md`. Confirm that the manuscript's claims fit within the BUILD_SPEC's pre-registered scope.
 6. **60+ minutes (optional).** Run a full sweep on the reviewer's hardware. Confirm gate verdicts agree.
@@ -1353,22 +1356,36 @@ If `qrc-thresher health` exits 0, the environment is ready. If it exits 1, read 
 ### F.2 Running a development sweep
 
 ```bash
-# Edit configs/alpha_lite.yaml as needed (or copy to a new file)
-qrc-thresher run stm --config configs/alpha_lite.yaml --seed 0
-qrc-thresher run stm --config configs/alpha_lite.yaml --seed 1
-qrc-thresher run stm --config configs/alpha_lite.yaml --seed 2
-qrc-thresher gate G1
+# A development run: every seed pair of the config, no tuning block needed
+qrc-thresher run stm --config configs/alpha_lite.yaml
+qrc-thresher gate G0.7 --config configs/alpha_lite.yaml
+
+# The comparative family (D011, D013, D014): tune once, run every arm, evaluate as a unit
+qrc-thresher tune --config configs/comparative.yaml            # stm, parity, narma; one sweep_id
+qrc-thresher run stm --config configs/comparative.yaml
+qrc-thresher run parity --config configs/comparative.yaml
+qrc-thresher run narma --config configs/comparative.yaml
+qrc-thresher run parity --config configs/comparative.yaml --design-task stm   # G1(b)
+qrc-thresher ablation no_entangle parity --config configs/comparative.yaml --design-task stm
+qrc-thresher ablation haar stm --config configs/comparative.yaml
+qrc-thresher baseline stm --config configs/comparative.yaml
+qrc-thresher baseline parity --config configs/comparative.yaml
+qrc-thresher baseline narma --config configs/comparative.yaml
+qrc-thresher gate G0.7 --config configs/alpha_lite.yaml --model tuned_qrc --tuning-config configs/comparative.yaml
+qrc-thresher gate family --config configs/comparative.yaml
 ```
 
-Each run appends to `results/runs.csv`. The gate consumes the CSV.
+Each run appends one row per seed pair (and deployment) to `results/runs.csv`. The gates consume
+the CSV; the family also needs the tuning records and the tuned G0.7 evaluation. The full CP4c
+sequence (including the `--design default` table) is in the CP4b report and D016.
 
 ### F.3 Running an ablation
 
 ```bash
-for ablation in phase_random no_entangle random_features haar; do
-  qrc-thresher ablation $ablation --seed 0
+for ablation in phase_random no_entangle haar; do        # RKS is a baseline (D011)
+  qrc-thresher ablation $ablation stm --config configs/comparative.yaml
 done
-qrc-thresher gate G2.5
+qrc-thresher gate G2.5 --config configs/comparative.yaml
 ```
 
 ### F.4 Generating figures
@@ -1384,12 +1401,11 @@ qrc-thresher summary --phase phase1
 git checkout <release-tag>
 pip install -e .
 qrc-thresher health
-# Re-run every seed in the manifest
-for seed in <seeds-from-manifest>; do
-  qrc-thresher run <task> --config <config-from-manifest> --seed $seed
-done
-qrc-thresher gate G<n>
-diff <expected-gate.json> results/gates/G<n>.json
+# Re-run every seed pair of the manifest's config (the pairs are the config's, not a flag)
+qrc-thresher tune --config <config-from-manifest>          # if the config has a tuning block
+qrc-thresher run <task> --config <config-from-manifest>
+qrc-thresher gate <name> --config <config-from-manifest>
+diff <expected-gate.json> results/gates/<the JSON the gate printed>
 ```
 
 ### F.6 Adding a new ablation axis
