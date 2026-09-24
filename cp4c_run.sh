@@ -22,7 +22,13 @@ log() { printf '%s  %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
 [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ] || die "not on $BRANCH"
 git fetch -q origin "$BRANCH" || die "cannot fetch origin/$BRANCH"
 [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BRANCH")" ] || die "HEAD $(git rev-parse --short HEAD) is not origin/$BRANCH $(git rev-parse --short "origin/$BRANCH"); push or pull first"
-[ -z "$(git status --porcelain | grep -v -E '^\?\? (cp4c_run\.sh|commit_plan)')" ] || die "working tree not clean; every row would carry -dirty"
+# The manifest writer appends -dirty whenever `git status --porcelain` prints anything, untracked
+# files included, so this guard must be exactly as strict: nothing at all may be listed. Keep this
+# script and any other helper OUTSIDE the repository (e.g. ..\qrc-tools\) and run it from the
+# repo root, or list the helpers in .git/info/exclude.
+STATUS=$(git status --porcelain)
+[ -z "$STATUS" ] || die "working tree not clean; every row would carry -dirty. git status --porcelain:
+$STATUS"
 uv sync --frozen >>"$LOG" 2>&1 || die "uv sync --frozen failed (see $LOG)"
 
 CONFIG_HASH=$(uv run python -c "from pathlib import Path; from qrc_thresher.proof.run_manifest import _config_hash; print(_config_hash(Path('$CFG')))") || die "cannot compute the config hash"
@@ -94,7 +100,10 @@ gate "COMPARATIVE.v1 family"                     $Q gate family --config $CFG
 step "summary cp4c"                              $Q summary --phase cp4c
 
 # ---- wrap-up ----------------------------------------------------------------------------------
-[ -z "$(git status --porcelain | grep -v -E '^\?\? (cp4c_run\.sh|commit_plan)')" ] || die "the sweep changed tracked files; investigate before reading any verdict"
+STATUS=$(git status --porcelain)
+[ -z "$STATUS" ] || die "the working tree changed during the sweep; investigate before reading any verdict. git status --porcelain:
+$STATUS"
+log "working tree clean at the end: every row carries $(git rev-parse HEAD) without -dirty"
 FAMILY=$(ls -1 results/gates/COMPARATIVE.v1.*.json 2>/dev/null | sort | tail -1)
 log "family JSON: ${FAMILY:-none written}"
 if [ -n "${FAMILY:-}" ]; then
