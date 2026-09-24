@@ -84,29 +84,32 @@ def check_esn_smoke(params: Optional[Any] = None) -> Dict[str, Any]:
     """Check the ESN baseline learns, not just that it returns an array.
 
     A 4-unit ESN (the linear preset unless ``params`` is given) is fitted with the harness
-    readout on a small STM task (T = 300, K = 4, 50-row washout). PASS requires a summed
-    held-out memory capacity over delays k = 1..4 of at least _ESN_SMOKE_MIN_MEMORY. A
-    disconnected ESN fails: its predictions are constant and cannot be scored.
+    readout on a small STM task (T = 300, K = 4) after the config's washout
+    (``training.washout``, D012). PASS requires a held-out ``stm_memory`` (delays k = 1..4) of
+    at least _ESN_SMOKE_MIN_MEMORY. A disconnected ESN fails: its predictions are constant and
+    cannot be scored.
     """
     try:
         from qrc_thresher.baselines.esn import ESN_PRESETS, draw_reservoir, fit_predict_esn
         from qrc_thresher.config import load_config
-        from qrc_thresher.metrics.scoring import memory_capacity
+        from qrc_thresher.metrics.scoring import stm_memory
         from qrc_thresher.tasks.stm import generate_stm
 
         params = params or ESN_PRESETS['esn_linear']
         cfg = load_config(_CONFIG_PATH)
+        washout = int(cfg.training.washout)
         ds = generate_stm(length=300, delay_max=4, train_frac=0.7, rng=np.random.default_rng(42))
         pred, esn, _ = fit_predict_esn(
-            ds.u, ds.targets, ds.train_end, draw_reservoir(4, 137), params, 50,
+            ds.u, ds.targets, ds.train_end, draw_reservoir(4, 137), params, washout,
             cfg.training.ridge_alphas, cfg.training.cv_folds,
         )
-        memory = float(memory_capacity(pred[:, 1:], ds.targets[ds.train_end:, 1:]))
+        memory = float(stm_memory(pred, ds.targets[ds.train_end:]))
         learned = memory >= _ESN_SMOKE_MIN_MEMORY
         return {
             'status': 'PASS' if learned else 'FAIL',
             'memory_k1_to_4': memory,
             'threshold': _ESN_SMOKE_MIN_MEMORY,
+            'washout': washout,
             'weight_hash': esn.weight_hash(),
         }
     except Exception as exc:

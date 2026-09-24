@@ -2,7 +2,8 @@
 
 The circuit is built independently from the same angles: this module imports nothing from
 PennyLane or from qrc_thresher. It implements D010's schedule directly. With window w, qubit j
-re-uploads u_{t-(j mod w)} at every layer through RY(pi * u), with 0 where t - (j mod w) < 0;
+re-uploads u_{t-(j mod w)} at every layer through RY(alpha * u), with 0 where t - (j mod w) < 0
+and alpha the encoding scale (default pi; D011);
 then RZ(theta_{d,j}) and RX(phi_{d,j}) on every qubit and the CNOT ring j -> (j + 1) mod n.
 The features are the Z expectations, then ZZ in PennyLane's pair order (i < j, lexicographic).
 
@@ -21,7 +22,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 CROSSCHECK_TOLERANCE = 1e-6  # float64; the single definition (defect D6)
-_ENCODING_SCALE = math.pi
+_ENCODING_SCALE = math.pi  # the default encoding scale (D011)
 
 
 def window_inputs(u: np.ndarray, window: int, n_qubits: int) -> np.ndarray:
@@ -36,13 +37,13 @@ def window_inputs(u: np.ndarray, window: int, n_qubits: int) -> np.ndarray:
     return out
 
 
-def _circuit(x, thetas, phis, n_qubits: int, depth: int):
+def _circuit(x, thetas, phis, n_qubits: int, depth: int, encoding_scale: float):
     from qiskit import QuantumCircuit
 
     qc = QuantumCircuit(n_qubits)
     for d in range(depth):
         for j in range(n_qubits):
-            qc.ry(_ENCODING_SCALE * float(x[j]), j)
+            qc.ry(float(encoding_scale) * float(x[j]), j)
         for j in range(n_qubits):
             qc.rz(float(thetas[d, j]), j)
             qc.rx(float(phis[d, j]), j)
@@ -78,6 +79,7 @@ def qiskit_features(
     depth: int,
     window: int,
     readout: str,
+    encoding_scale: float = _ENCODING_SCALE,
 ) -> np.ndarray:
     """Feature matrix of shape (T, F) from Qiskit Aer, for D010's windowed schedule.
 
@@ -89,6 +91,7 @@ def qiskit_features(
         depth: Number of layers L.
         window: The window w, in 1..n_qubits.
         readout: 'z_only' (F = n) or 'z_and_zz' (F = n + n(n-1)/2).
+        encoding_scale: The angle-encoding scale alpha of RY(alpha * u) (default pi; D011).
     """
     from qiskit_aer import AerSimulator
 
@@ -97,7 +100,10 @@ def qiskit_features(
     if thetas.shape != (depth, n_qubits) or phis.shape != (depth, n_qubits):
         raise ValueError(f'angles must have shape {(depth, n_qubits)}')
     inputs = window_inputs(u, window, n_qubits)
-    circuits = [_circuit(inputs[t], thetas, phis, n_qubits, depth) for t in range(len(inputs))]
+    circuits = [
+        _circuit(inputs[t], thetas, phis, n_qubits, depth, encoding_scale)
+        for t in range(len(inputs))
+    ]
     if not circuits:
         n_features = n_qubits if readout == 'z_only' else n_qubits + n_qubits * (n_qubits - 1) // 2
         return np.zeros((0, n_features), dtype=np.float64)

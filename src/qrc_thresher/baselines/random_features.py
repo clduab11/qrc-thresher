@@ -1,7 +1,10 @@
-"""Random Kitchen Sinks / Random Nonlinear Features baseline.
+"""Random Kitchen Sinks / Random Nonlinear Features baseline (docs/DECISIONS.md D011; D13).
 
-Feature: phi(u) = cos(W*u + b) where W ~ N(0, sigma^2/d), b ~ Uniform(0, 2*pi).
-Dimension matched to QRC features.
+Feature: phi(x_t) = cos(W x_t + b) on the zero-padded input window
+x_t = (u_t, u_{t-1}, ..., u_{t-d+1}) of dimension d, with W of shape (F, d), W_ij ~ N(0,
+(sigma / sqrt(d))^2) drawn row-major from the stream, then b ~ Uniform(0, 2 pi) of shape (F,).
+At d = 1 the stream positions of the D010 draw are unchanged and only the scale of W changes
+(sigma / F became sigma). F is matched to the QRC feature count.
 """
 
 from __future__ import annotations
@@ -21,30 +24,45 @@ logger = logging.getLogger(__name__)
 class RKSParams:
     """Random Kitchen Sinks parameters."""
 
-    W: np.ndarray  # shape (n_features,)
+    W: np.ndarray  # shape (n_features, window)
     b: np.ndarray  # shape (n_features,)
     sigma: float
     n_features: int
+    window: int = 1
 
 
 def build_rks_params(
     n_features: int,
     sigma: float,
     rng: Generator,
+    window: int = 1,
 ) -> RKSParams:
-    """Build random projection parameters for RKS baseline.
+    """Build random projection parameters for the RKS baseline (D011).
 
     Args:
-        n_features: Number of random features (must equal N_quantum_features).
-        sigma: Bandwidth parameter.
-        rng: Seeded generator.
+        n_features: Number of random features F (must equal N_quantum_features).
+        sigma: Bandwidth parameter; W_ij ~ N(0, (sigma / sqrt(window))^2).
+        rng: Seeded generator (default_rng([reservoir_seed, 3]) in the harness).
+        window: Input window dimension d >= 1.
 
     Returns:
-        RKSParams with W and b.
+        RKSParams with W of shape (F, d) and b of shape (F,).
     """
-    W = rng.normal(0.0, sigma / max(n_features, 1), size=n_features)
+    if window < 1:
+        raise ValueError(f'window must be >= 1; got {window}')
+    W = rng.normal(0.0, sigma / np.sqrt(window), size=(n_features, window))
     b = rng.uniform(0.0, 2.0 * np.pi, size=n_features)
-    return RKSParams(W=W, b=b, sigma=sigma, n_features=n_features)
+    return RKSParams(W=W, b=b, sigma=float(sigma), n_features=int(n_features), window=int(window))
+
+
+def window_inputs(u: np.ndarray, window: int) -> np.ndarray:
+    """Zero-padded input window: row t, column j is u_{t-j}, or 0 where t - j < 0."""
+    u = np.asarray(u, dtype=np.float64).ravel()
+    T = len(u)
+    out = np.zeros((T, window), dtype=np.float64)
+    for j in range(window):
+        out[j:, j] = u[: T - j]
+    return out
 
 
 def extract_rks_features(
@@ -63,8 +81,9 @@ def extract_rks_features(
     Raises:
         ValueError: If features contain non-finite values.
     """
-    # phi(u_t) = cos(W * u_t + b) — vectorized over time
-    X = np.cos(np.outer(u, params.W) + params.b)  # shape (T, n_features)
+    # phi(x_t) = cos(W x_t + b) on the zero-padded window, vectorised over time.
+    W = np.asarray(params.W, dtype=np.float64).reshape(params.n_features, -1)
+    X = np.cos(window_inputs(u, W.shape[1]) @ W.T + params.b)  # shape (T, n_features)
     if not np.isfinite(X).all():
         raise ValueError('RKS features contain non-finite values')
     return X
@@ -79,8 +98,9 @@ def train_rks(
     cv_folds: int,
     rng: Generator,
     sigma: float = 1.0,
+    window: int = 1,
 ) -> np.ndarray:
-    """Train RKS baseline and predict on test set.
+    """Train RKS baseline and predict on test set (plugin entry point).
 
     Args:
         u_train: Training input of shape (T_train,).
@@ -95,7 +115,7 @@ def train_rks(
     Returns:
         Predictions of shape (T_test,) or (T_test, K).
     """
-    params = build_rks_params(n_features=n_features, sigma=sigma, rng=rng)
+    params = build_rks_params(n_features=n_features, sigma=sigma, rng=rng, window=window)
     X_train = extract_rks_features(u_train, params)
     X_test = extract_rks_features(u_test, params)
 

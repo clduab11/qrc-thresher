@@ -9,8 +9,10 @@ u_t ... u_{t-w+1} only: the memory cliff sits at delay k = w. At w = 1 this is t
 (reservoirs/pennylane_qrc.py, kept unchanged as the reference), bit for bit.
 
 The window draws no randomness: the angles come from build_reservoir_params with
-default_rng(reservoir_seed), so they are the same at every w. The circuit hash is
-compute_circuit_hash(params) at w = 1 and SHA-256("<that hash>,window=<w>") otherwise.
+default_rng(reservoir_seed), so they are the same at every w. The encoding scale alpha of
+RY(alpha * u) is a tuned hyperparameter (D011; pi is today's circuit). The circuit hash starts
+from compute_circuit_hash(params), appends ",window=<w>" when w > 1, then always
+",encoding_scale=<repr(float(alpha))>" (D011, PI ruling 8), then any ablation suffix.
 
 Matched ablations change one factor and inherit everything else (seed, readout, window and the
 re-upload schedule):
@@ -25,8 +27,9 @@ An ablation's hash extends the reservoir's: ",entangle=False", ",random_phases=[
 ",layer_unitaries=<SHA-256 of the unitaries' bytes>". Restoring the factor restores the hash.
 
 RKS (random_features) is not a circuit variant: rks_from_config gives it the reservoir's
-feature count F and the stream default_rng([reservoir_seed, 3]). Its input stays u_t and its
-bandwidth sigma / F with sigma = 1 until D13.
+feature count F and the stream default_rng([reservoir_seed, 3]); its bandwidth is sigma / sqrt(d)
+on the zero-padded input window of dimension d (D011, defect D13), with sigma = 1 and d = 1 as
+the untuned default.
 
 Every config-driven build goes through reservoir_from_config, which reads reservoir.window.
 Within one features() call, each distinct per-qubit input row is simulated once and reused
@@ -38,6 +41,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -46,7 +50,6 @@ import pennylane as qml
 
 from qrc_thresher.config import AlphaLiteConfig
 from qrc_thresher.reservoirs.pennylane_qrc import (
-    _ENCODING_SCALE,
     QRCParams,
     build_reservoir_params,
     compute_circuit_hash,
@@ -60,7 +63,8 @@ ABLATION_TAGS: Dict[str, int] = {'phase_random': 1, 'haar': 2, 'random_features'
 # Feeding each layer the unitary of its own RZ, RX and CNOT ring reproduces the reservoir
 # within this maximum absolute difference (D010): float64 rounding only, of order 1e-15.
 HAAR_SWITCH_BACK_TOLERANCE = 1e-10
-RKS_SIGMA = 1.0  # bandwidth sigma / F, until D13
+RKS_SIGMA = 1.0  # the untuned RKS bandwidth; the window d = 1 (D010 default, D011)
+ENCODING_SCALE_DEFAULT = math.pi  # today's circuit; the untuned default (D011)
 
 
 def _sha256(text: str) -> str:
@@ -154,6 +158,8 @@ class WindowedReservoir:
         random_phases: True draws fresh RZ and RX angles at every step (phase_random).
         layer_unitaries: One unitary per layer replacing that layer's RZ, RX and CNOT ring
             (haar), or None.
+        encoding_scale: The angle-encoding scale alpha of RY(alpha * u) at every re-upload
+            (D011); pi is today's circuit.
 
     ``circuit_hash`` is derived from these fields, never stored, so dataclasses.replace keeps
     it consistent.
@@ -166,12 +172,17 @@ class WindowedReservoir:
     entangle: bool = True
     random_phases: bool = False
     layer_unitaries: Optional[Tuple[np.ndarray, ...]] = None
+    encoding_scale: float = ENCODING_SCALE_DEFAULT
 
     def __post_init__(self) -> None:
         n = self.params.n_qubits
         object.__setattr__(self, 'window', check_window(self.window, n))
         object.__setattr__(self, 'entangle', bool(self.entangle))
         object.__setattr__(self, 'random_phases', bool(self.random_phases))
+        scale = float(self.encoding_scale)
+        if not (math.isfinite(scale) and scale > 0):
+            raise ValueError(f'encoding_scale must be a finite positive number; got {scale!r}')
+        object.__setattr__(self, 'encoding_scale', scale)
         if self.random_phases and self.reservoir_seed is None:
             raise ValueError('phase_random needs reservoir_seed for its random stream')
         if self.layer_unitaries is not None:
@@ -205,10 +216,11 @@ class WindowedReservoir:
 
     @property
     def circuit_hash(self) -> str:
-        """SHA-256 identifying the simulated circuit (D010 recipes)."""
+        """SHA-256 identifying the simulated circuit (D010 recipes, D011 scale suffix)."""
         h = compute_circuit_hash(self.params)
         if self.window > 1:
             h = _sha256(f'{h},window={self.window}')
+        h = _sha256(f'{h},encoding_scale={float(self.encoding_scale)!r}')  # always (ruling 8)
         if not self.entangle:
             h = _sha256(f'{h},entangle=False')
         if self.random_phases:
@@ -223,13 +235,14 @@ class WindowedReservoir:
         params = self.params
         n, depth = params.n_qubits, params.depth
         entangle, unitaries = self.entangle, self.layer_unitaries
+        scale = self.encoding_scale
         dev = qml.device(params.backend, wires=n)
 
         @qml.qnode(dev)
         def circuit(x: List[float]) -> list:
             for d in range(depth):
                 for j in range(n):
-                    qml.RY(_ENCODING_SCALE * x[j], wires=j)
+                    qml.RY(scale * x[j], wires=j)
                 if unitaries is not None:
                     qml.QubitUnitary(unitaries[d], wires=list(range(n)))
                     continue
@@ -321,7 +334,8 @@ def reservoir_from_config(
     """Build the configured reservoir, or one matched ablation of it, for a reservoir seed.
 
     The angles come from build_reservoir_params with default_rng(reservoir_seed), as every
-    harness build draws them; the window is cfg.reservoir.window.
+    harness build draws them; the window is cfg.reservoir.window and the encoding scale
+    cfg.reservoir.encoding_scale.
 
     Raises:
         ValueError: For an unknown ablation name, or 'random_features' (see rks_from_config).
@@ -339,6 +353,7 @@ def reservoir_from_config(
         window=cfg.reservoir.window,
         reservoir_seed=int(reservoir_seed),
         ablation=ablation,
+        encoding_scale=cfg.reservoir.encoding_scale,
         **fields,
     )
 
@@ -348,18 +363,26 @@ def n_features_from_config(cfg: AlphaLiteConfig) -> int:
     return n if cfg.reservoir.readout == 'z_only' else n + n * (n - 1) // 2
 
 
-def rks_from_config(cfg: AlphaLiteConfig, reservoir_seed: int):
-    """RKS parameters matched to the reservoir: F features, stream default_rng([seed, 3])."""
+def rks_from_config(
+    cfg: AlphaLiteConfig, reservoir_seed: int, sigma: float = RKS_SIGMA, window: int = 1
+):
+    """RKS parameters matched to the reservoir: F features, stream default_rng([seed, 3]),
+    bandwidth sigma / sqrt(window) on the zero-padded input window (D011)."""
     from qrc_thresher.baselines.random_features import build_rks_params
 
     rng = np.random.default_rng([int(reservoir_seed), ABLATION_TAGS['random_features']])
-    return build_rks_params(n_features=n_features_from_config(cfg), sigma=RKS_SIGMA, rng=rng)
+    return build_rks_params(
+        n_features=n_features_from_config(cfg), sigma=float(sigma), rng=rng, window=int(window)
+    )
 
 
 def rks_circuit_hash(rks_params) -> str:
-    """SHA-256 of F, sigma, W and b: identifies an RKS row's features."""
+    """SHA-256 of F, sigma, the window d, W and b: identifies an RKS row's features (D011)."""
     h = hashlib.sha256()
-    h.update(f'rks:n_features={rks_params.n_features},sigma={rks_params.sigma!r}:'.encode())
+    h.update(
+        f'rks:n_features={rks_params.n_features},sigma={rks_params.sigma!r},'
+        f'window={rks_params.window}:'.encode()
+    )
     h.update(np.ascontiguousarray(rks_params.W, dtype=np.float64).tobytes())
     h.update(np.ascontiguousarray(rks_params.b, dtype=np.float64).tobytes())
     return h.hexdigest()
@@ -405,6 +428,7 @@ def plugin_haar(u, params: QRCParams, window: int = 1, reservoir_seed=None) -> n
 __all__ = [
     'ABLATIONS',
     'ABLATION_TAGS',
+    'ENCODING_SCALE_DEFAULT',
     'HAAR_SWITCH_BACK_TOLERANCE',
     'WindowedReservoir',
     'check_window',
