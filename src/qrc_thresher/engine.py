@@ -78,13 +78,17 @@ def run_pair(
     design: str = 'tuned',
     design_task: Optional[str] = None,
     log_artifacts: Optional[Any] = None,
+    deployments: Optional[List[Any]] = None,
 ) -> List[RunManifest]:
     """Run every QRC deployment of one seed pair on one task and return the manifests.
 
     The shared path of the engine and the run command (D012, D013): the task data, the
-    deployments of ``deploy.qrc_deployments``, the harness readout on [washout, train_end),
-    the task's metric on the test rows. ``log_artifacts(X, model, run_id) -> list[str]`` may
-    save per-run artifacts and return their paths.
+    deployments of ``deploy.qrc_deployments`` (or ``deployments`` resolved up front by
+    ``deploy.resolve_deployments``), the harness readout on [washout, train_end), the task's
+    metric on the test rows. ``log_artifacts(X, model, run_id) -> list[str]`` may save per-run
+    artifacts and return their paths. A missing record, an absent pair or a design-hash
+    mismatch raises before any manifest exists (CP4b.1 item A4); only the fit of one
+    deployment can produce a failure row.
     """
     from qrc_thresher.deploy import fit_and_score, qrc_deployments
     from qrc_thresher.task_names import qrc_task_name
@@ -92,21 +96,14 @@ def run_pair(
 
     timer = StageTimer()
     manifests: List[RunManifest] = []
-    try:
-        with timer.stage('task_generation'):
-            ds = task_data(config, task_name, task_seed)
-        with timer.stage('reservoir_build'):
+    with timer.stage('task_generation'):
+        ds = task_data(config, task_name, task_seed)
+    with timer.stage('reservoir_build'):
+        if deployments is None:
             deployments = qrc_deployments(
                 config, task_name, reservoir_seed, task_seed, cfg_path,
                 design=design, design_task=design_task,
             )
-    except Exception as exc:
-        logger.error('Seed pair %d/%d failed: %s', task_seed, reservoir_seed, exc)
-        manifests.append(_manifest(
-            config, cfg_path, task_name, task_seed, reservoir_seed, timer.to_dict(),
-            circuit_hash='n/a', success=False, failure_reason=str(exc), design='default',
-        ))
-        return manifests
 
     for dep in deployments:
         dep_timer = StageTimer()
@@ -229,6 +226,15 @@ class ParallelRunner:
         """
         if n_seeds is None:
             n_seeds = self.config.seeds.n_seeds
+
+        # Every pair's design is resolved (record, pair, hash) before any work or row (A4).
+        from qrc_thresher.deploy import resolve_deployments
+
+        resolve_deployments(
+            self.config, task_name,
+            Path(config_path) if config_path is not None else Path('unknown'),
+            design=design, design_task=design_task,
+        )
 
         config_dict = self.config.model_dump()
         config_dict['_config_path'] = 'unknown' if config_path is None else str(config_path)

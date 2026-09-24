@@ -94,8 +94,14 @@ def run_baselines(
 
 def baseline_handler(task: str, config_path: str, design: str = 'tuned') -> int:
     """CLI handler: run the enabled baselines. Exit 0 only if every run succeeded."""
+    from qrc_thresher.proof.run_manifest import RunsCsvWriteError
+
     cfg_path = Path(config_path)
-    manifests = run_baselines(load_config(cfg_path), task, cfg_path, design=design)
+    try:
+        manifests = run_baselines(load_config(cfg_path), task, cfg_path, design=design)
+    except RunsCsvWriteError as exc:  # CP4b.1 item A3: a lost row fails the run, loudly
+        print(f'baseline {task}: aborted; {exc}')
+        return 1
     n_ok = sum(1 for m in manifests if m.success)
     print(f'Baseline run ({task}): {n_ok}/{len(manifests)} successful')
     for m in manifests:

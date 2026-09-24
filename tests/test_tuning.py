@@ -129,13 +129,16 @@ class TestConfig:
                                                                      monkeypatch) -> None:
         from qrc_thresher.commands.run import run_handler
         from qrc_thresher.engine import ParallelRunner
+        from qrc_thresher.tuning import TuningRecordMissing
 
         cfg_path = _write(tmp_path)
         monkeypatch.chdir(tmp_path)
         cfg = load_config(cfg_path)
-        assert run_handler('stm', str(cfg_path)) != 0
-        manifests = ParallelRunner(config=cfg, max_workers=1).run_seeds('stm', config_path=cfg_path)
-        assert all(not m.success and 'tuning' in (m.failure_reason or '') for m in manifests)
+        # CP4b.1 item A4: a missing record aborts before any row (no failure rows, exit 1).
+        assert run_handler('stm', str(cfg_path)) == 1
+        with pytest.raises(TuningRecordMissing, match='tuning'):
+            ParallelRunner(config=cfg, max_workers=1).run_seeds('stm', config_path=cfg_path)
+        assert not (tmp_path / 'results' / 'runs.csv').exists()
 
 
 class TestRecord:

@@ -26,15 +26,27 @@ def run_handler(
     design: str = 'tuned',
     design_task: Optional[str] = None,
 ) -> int:
-    """Handle the serial run command: every seed pair of the config. Returns exit code."""
+    """Handle the serial run command: every seed pair of the config. Returns exit code.
+
+    Every pair's deployment is resolved before the first run (a missing record, an absent pair,
+    a design-hash mismatch or an unusable design flag exits 1 with the message and writes
+    nothing; CP4b.1 items A1, A4). A runs.csv that cannot be written exits 1 naming the path
+    (item A3); nothing is left in experiments.db for that row.
+    """
     from qrc_thresher.config import load_config
     from qrc_thresher.db import ExperimentDB
+    from qrc_thresher.deploy import resolve_deployments
     from qrc_thresher.engine import run_pair
-    from qrc_thresher.proof.run_manifest import RunsCsvSchemaError, update_cumulative_compute
-    from qrc_thresher.tuning import seed_pairs
+    from qrc_thresher.proof.run_manifest import RunsCsvWriteError, update_cumulative_compute
 
     cfg_path = Path(config_path)
     cfg = load_config(cfg_path)
+    try:
+        deployments = resolve_deployments(cfg, task, cfg_path, design=design,
+                                          design_task=design_task)
+    except Exception as exc:  # TuningRecordMissing, KeyError, DesignHashMismatch, ...
+        print(f'{task}: nothing run; {_message(exc)}')
+        return 1
 
     def log_artifacts(X: np.ndarray, model) -> List[str]:
         if not cfg.proof.log_artifacts:
@@ -46,10 +58,10 @@ def run_handler(
         return paths
 
     all_ok = True
-    for task_seed, reservoir_seed in seed_pairs(cfg):
+    for (task_seed, reservoir_seed), deps in deployments.items():
         manifests = run_pair(
             cfg, task, task_seed, reservoir_seed, cfg_path, design=design,
-            design_task=design_task, log_artifacts=log_artifacts,
+            design_task=design_task, log_artifacts=log_artifacts, deployments=deps,
         )
         for manifest in manifests:
             if manifest.success:
@@ -63,14 +75,20 @@ def run_handler(
                       f'{manifest.failure_reason}')
             try:
                 db = ExperimentDB()
-                db.insert(manifest)
-                db.close()
-            except RunsCsvSchemaError:
-                raise
-            except Exception as exc:
-                logger.warning('Failed to insert into ExperimentDB: %s', exc)
+                try:
+                    db.insert(manifest)
+                finally:
+                    db.close()
+            except RunsCsvWriteError as exc:
+                print(f'{task} seeds {task_seed}/{reservoir_seed}: run aborted; {exc}')
+                return 1
             update_cumulative_compute(sum(manifest.runtime_per_stage_seconds.values()))
     return 0 if all_ok else 1
+
+
+def _message(exc: BaseException) -> str:
+    text = str(exc)
+    return text[1:-1] if isinstance(exc, KeyError) and text[:1] in ('"', "'") else text
 
 
 def _save_features(X: np.ndarray, run_id: str) -> Optional[str]:
@@ -132,11 +150,23 @@ def run_parallel_handler(
     cfg_path = Path(config_path)
     cfg = load_config(cfg_path)
 
+    from qrc_thresher.deploy import resolve_deployments
+    from qrc_thresher.proof.run_manifest import RunsCsvWriteError
+
+    try:
+        resolve_deployments(cfg, task, cfg_path, design=design, design_task=design_task)
+    except Exception as exc:
+        print(f'{task}: nothing run; {_message(exc)}')
+        return 1
     runner = ParallelRunner(config=cfg, max_workers=workers)
-    manifests = runner.run_seeds(
-        task_name=task, n_seeds=cfg.seeds.n_seeds, config_path=cfg_path, design=design,
-        design_task=design_task,
-    )
+    try:
+        manifests = runner.run_seeds(
+            task_name=task, n_seeds=cfg.seeds.n_seeds, config_path=cfg_path, design=design,
+            design_task=design_task,
+        )
+    except RunsCsvWriteError as exc:
+        print(f'{task}: run aborted; {exc}')
+        return 1
 
     n_total = len(manifests)
     n_success = sum(1 for m in manifests if m.success)

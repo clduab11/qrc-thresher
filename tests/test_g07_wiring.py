@@ -189,8 +189,11 @@ class TestTunedModel:
         details = captured['model_details']
         assert details['sweep_id'] == record['sweep_id']
         assert details['tuning_config_hash'] == record['config_hash']
+        # CP4b.1 item A1: the details carry the built reservoir's hash, verified against the
+        # record, and say so.
         assert details['designs'] == {
-            key: {k: entry[k] for k in ('depth', 'window', 'encoding_scale', 'circuit_hash')}
+            key: {**{k: entry[k] for k in ('depth', 'window', 'encoding_scale', 'circuit_hash')},
+                  'hash_verified': True}
             for key, entry in record['qrc'].items()
         }
         u = np.random.default_rng(0).uniform(-1.0, 1.0, size=6)

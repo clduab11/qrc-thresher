@@ -28,25 +28,44 @@ def ablation_handler(
     design: str = 'tuned',
     design_task: Optional[str] = None,
 ) -> int:
-    """Run ablation ``name`` of ``task`` on every seed pair of the config. Returns exit code."""
+    """Run ablation ``name`` of ``task`` on every seed pair of the config. Returns exit code.
+
+    Every pair's design is resolved (record, pair, hash; CP4b.1 items A1, A4) before the first
+    row; a failure there exits 1 with the message and writes nothing. A runs.csv that cannot be
+    written exits 1 naming the path (item A3).
+    """
     from qrc_thresher.config import load_config
-    from qrc_thresher.tuning import seed_pairs
+    from qrc_thresher.deploy import resolve_deployments
+    from qrc_thresher.proof.run_manifest import RunsCsvWriteError
 
     cfg_path = Path(config_path)
     cfg = load_config(cfg_path)
     if name not in ABLATION_NAMES:
         raise ValueError(f'unknown ablation {name!r}; choose from {list(ABLATION_NAMES)}')
+    try:
+        deployments = resolve_deployments(cfg, task, cfg_path, design=design,
+                                          design_task=design_task, ablation=name)
+    except Exception as exc:
+        text = str(exc)
+        if isinstance(exc, KeyError) and text[:1] in ('"', "'"):
+            text = text[1:-1]
+        print(f'ablation {name} {task}: nothing run; {text}')
+        return 1
     ok = True
-    for task_seed, reservoir_seed in seed_pairs(cfg):
-        for manifest in _run_one(cfg, cfg_path, name, task, task_seed, reservoir_seed,
-                                 design=design, design_task=design_task):
+    for (task_seed, reservoir_seed), deps in deployments.items():
+        try:
+            manifests = _run_one(cfg, cfg_path, name, task, task_seed, reservoir_seed, deps)
+        except RunsCsvWriteError as exc:
+            print(f'ablation {name} {task} seeds {task_seed}/{reservoir_seed}: aborted; {exc}')
+            return 1
+        for manifest in manifests:
             ok &= bool(manifest.success)
     return 0 if ok else 1
 
 
 def _run_one(cfg, cfg_path: Path, name: str, task: str, task_seed: int, reservoir_seed: int,
-             *, design: str = 'tuned', design_task: Optional[str] = None) -> List:
-    from qrc_thresher.deploy import fit_and_score, qrc_deployments
+             deployments: List) -> List:
+    from qrc_thresher.deploy import fit_and_score
     from qrc_thresher.metrics.runtime import StageTimer
     from qrc_thresher.proof.run_manifest import (
         append_to_csv,
@@ -58,26 +77,8 @@ def _run_one(cfg, cfg_path: Path, name: str, task: str, task_seed: int, reservoi
 
     timer = StageTimer()
     manifests = []
-    try:
-        with timer.stage('task_generation'):
-            ds = task_data(cfg, task, task_seed)
-        with timer.stage('reservoir_build'):
-            deployments = qrc_deployments(
-                cfg, task, reservoir_seed, task_seed, cfg_path, design=design,
-                design_task=design_task, ablation=name,
-            )
-    except Exception as exc:
-        logger.error('Ablation %s failed for seeds %d/%d: %s', name, task_seed, reservoir_seed, exc)
-        manifest = create_manifest(
-            config_path=cfg_path, circuit_hash=f'ablation:{name}', task_seed=task_seed,
-            reservoir_seed=reservoir_seed, backend_device=cfg.reservoir.backend,
-            runtime_per_stage_seconds=timer.to_dict(), entanglement_metric=None, success=False,
-            failure_reason=str(exc), artifact_paths=[], task_name=ablation_task_name(name),
-            measurement_model=cfg.measurement.model, n_configs=1, n_validation_evals=0,
-            design='inherited',
-        )
-        append_to_csv(manifest)
-        return [manifest]
+    with timer.stage('task_generation'):
+        ds = task_data(cfg, task, task_seed)
 
     for dep in deployments:
         dep_timer = StageTimer()

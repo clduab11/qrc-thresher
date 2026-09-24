@@ -345,7 +345,18 @@ def _evaluate_gate_g07(
                 'parity_clause': 'INSUFFICIENT_EVIDENCE', 'measurement_label': '',
                 'json': '', 'figure': '',
             }, []
-    result = g07.evaluate_config(cfg, model=model, tuning_record=tuning_record)
+    try:
+        result = g07.evaluate_config(cfg, model=model, tuning_record=tuning_record)
+    except ValueError as exc:
+        if model != 'tuned_qrc':
+            raise
+        # A record that does not describe this config's pairs or reservoir, or a design whose
+        # rebuilt hash is not the record's (D011; CP4b.1 item A1): refuse, write nothing.
+        return 'INSUFFICIENT_EVIDENCE', {
+            'message': str(exc), 'stm_clause': 'INSUFFICIENT_EVIDENCE',
+            'parity_clause': 'INSUFFICIENT_EVIDENCE', 'measurement_label': '',
+            'json': '', 'figure': '',
+        }, []
     paths = g07.write_report(result, out_dir or Path('results') / 'gates')
     evidence = {
         'message': result['message'],

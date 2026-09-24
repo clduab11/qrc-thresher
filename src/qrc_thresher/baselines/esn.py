@@ -269,7 +269,9 @@ def tune_esn(
     from qrc_thresher.tuning import Candidate, select_configuration
 
     configs = _grid_configs(grid)
-    u = np.asarray(u, dtype=np.float64).ravel()
+    train_end = int(train_end)
+    u_train = np.asarray(u, dtype=np.float64).ravel()[:train_end]  # test rows never reach it
+    targets_train = np.asarray(targets, dtype=np.float64)[:train_end]
     candidates = []
     for params in configs:
         esn = build_esn(draw, params)
@@ -277,11 +279,11 @@ def tune_esn(
             Candidate(
                 hyperparameters=params.__dict__.copy(),
                 circuit_hash=esn.weight_hash(),
-                features=(lambda model=esn: model.states(u)),
+                features=(lambda model=esn: model.states(u_train)),
             )
         )
     selection = select_configuration(
-        candidates, targets, train_end, washout, ridge_alphas, cv_folds, task,
+        candidates, targets_train, washout, ridge_alphas, cv_folds, task,
         degenerate_errors=(NonFiniteStatesError,),
     )
     records = []

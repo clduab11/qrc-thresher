@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -271,11 +270,10 @@ def comparator_arm(
 # --- evaluation ---------------------------------------------------------------------------------
 
 def _git_commit() -> str:
-    try:
-        return subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True,
-                              check=True).stdout.strip()
-    except Exception:
-        return 'unknown'
+    """HEAD with '-dirty' when the tree has changes, as every manifest row records it (A5)."""
+    from qrc_thresher.proof.run_manifest import _git_commit_hash
+
+    return _git_commit_hash()
 
 
 def _sweep_for(sweep_id: Union[str, Dict[str, str], None], task: str) -> Optional[str]:
@@ -632,8 +630,9 @@ def evaluate_config(
     designs = designs_from_records(cfg, records)
     sweeps = {task: r['sweep_id'] for task, r in records.items()}
     shas = {task: r['record_sha256'] for task, r in records.items()}
-    if len(set(sweeps.values())) == 1:
+    if len(set(sweeps.values())) == 1:  # one `tune` invocation: one stamp (D016)
         sweeps = next(iter(sweeps.values()))  # type: ignore[assignment]
+    if len(set(shas.values())) == 1:
         shas = next(iter(shas.values()))  # type: ignore[assignment]
     result = evaluate_family(
         runs, protocol, designs, g07_tuned=newest_g07_tuned(gates_dir),

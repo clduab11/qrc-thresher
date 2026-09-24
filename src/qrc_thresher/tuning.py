@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -92,7 +92,6 @@ class Selection:
 def select_configuration(
     candidates: Sequence[Candidate],
     targets: np.ndarray,
-    train_end: int,
     washout: int,
     ridge_alphas: Sequence[float],
     cv_folds: int,
@@ -102,10 +101,13 @@ def select_configuration(
 ) -> Selection:
     """Score every candidate on the validation blocks and pick the best (D011).
 
+    The routine only ever sees training rows: ``targets`` is ``targets[:train_end]`` and every
+    candidate's feature matrix has the same number of rows. Test rows cannot reach it, which is
+    what ``selection_scope: train_cv`` in the record states (PI ruling 3; CP4b.1 item A2).
+
     Args:
-        candidates: The grid points; each builds its feature matrix once, shape (T, F).
-        targets: Targets, shape (T,) or (T, K).
-        train_end: First test row; rows at or beyond it are never touched.
+        candidates: The grid points; each builds its feature matrix once, shape (n_train, F).
+        targets: Training targets, shape (n_train,) or (n_train, K).
         washout: Rows [0, washout) are dropped from selection.
         ridge_alphas: Harness readout penalties.
         cv_folds: Number of contiguous validation blocks (and the readout's inner folds).
@@ -113,7 +115,8 @@ def select_configuration(
         degenerate_errors: Extra exception types that flag a configuration as degenerate.
 
     Raises:
-        ValueError: If there are no candidates or too few training rows.
+        ValueError: If there are no candidates, too few training rows, or a candidate's
+            feature matrix has a different number of rows than ``targets``.
         RuntimeError: If every configuration is degenerate.
     """
     from sklearn.model_selection import KFold
@@ -124,12 +127,12 @@ def select_configuration(
     if not candidates:
         raise ValueError('select_configuration needs at least one candidate')
     metric, score, higher = selection_metric(task)
-    rows = np.arange(int(washout), int(train_end))
+    targets = np.asarray(targets, dtype=np.float64)
+    n_train = int(targets.shape[0])
+    rows = np.arange(int(washout), n_train)
     if len(rows) < 2 * cv_folds:
         raise ValueError(f'too few training rows after the washout: {len(rows)}')
-    assert rows.max() < train_end, 'selection must never touch a test row'  # train_cv scope
     blocks = list(KFold(n_splits=cv_folds).split(rows))
-    targets = np.asarray(targets, dtype=np.float64)
     flagged = (DegeneratePredictionError, *degenerate_errors)
 
     records: List[dict] = []
@@ -137,16 +140,16 @@ def select_configuration(
         record = {'score': None, 'degenerate': False, 'reason': None}
         try:
             X = np.asarray(cand.features(), dtype=np.float64)
-            if X.ndim != 2 or X.shape[0] != len(targets):
+            if X.ndim != 2 or X.shape[0] != n_train:
                 raise ValueError(
-                    f'features must have shape (T, F) with T = {len(targets)}; got {X.shape}'
+                    f'features must have shape (n_train, F) with n_train = {n_train}; '
+                    f'got {X.shape}'
                 )
             if not np.all(np.isfinite(X)):
                 raise DegeneratePredictionError('features contain non-finite values')
             block_scores = []
             for fit_idx, val_idx in blocks:
                 fit_rows, val_rows = rows[fit_idx], rows[val_idx]
-                assert fit_rows.max() < train_end and val_rows.max() < train_end
                 y_fit = targets[fit_rows].reshape(len(fit_rows), -1, 1)
                 fit = fit_ridge_cv_batched(X[fit_rows], y_fit, ridge_alphas, cv_folds)
                 pred = fit.predict(X[val_rows])[:, :, 0].reshape(targets[val_rows].shape)
@@ -209,12 +212,18 @@ def task_data(cfg: AlphaLiteConfig, task: str, task_seed: int):
     if task == 'stm':
         from qrc_thresher.tasks.stm import generate_stm
 
-        return generate_stm(length=cfg.task.length, delay_max=cfg.task.delay_max or 20,
+        if cfg.task.delay_max is None:  # no silent K = 20 (CP4b.1 item C8)
+            raise ValueError('task.delay_max must be set to run STM (the washout is checked '
+                             'against it; D012)')
+        return generate_stm(length=cfg.task.length, delay_max=cfg.task.delay_max,
                             train_frac=cfg.task.train_frac, rng=rng)
     if task == 'parity':
         from qrc_thresher.tasks.temporal_parity import generate_parity
 
-        return generate_parity(length=cfg.task.length, window=cfg.task.parity_window or 3,
+        if cfg.task.parity_window is None:
+            raise ValueError('task.parity_window must be set to run parity (the washout is '
+                             'checked against it; D012)')
+        return generate_parity(length=cfg.task.length, window=cfg.task.parity_window,
                                train_frac=cfg.task.train_frac, rng=rng)
     if task == 'narma':
         from qrc_thresher.tasks.narma10 import generate_narma10
@@ -334,8 +343,16 @@ def _entry(
     }
 
 
-def tune_config(cfg: AlphaLiteConfig, task: str, config_path: Path) -> dict:
+def tune_config(
+    cfg: AlphaLiteConfig, task: str, config_path: Path, sweep_id: Optional[str] = None
+) -> dict:
     """Run the D011 tuner for every seed pair and every model, and write the record.
+
+    Only the training rows reach the tuner: the candidates are built on ``u[:train_end]`` and
+    scored against ``targets[:train_end]`` (every reservoir here is causal, so these are the
+    first train_end rows of the full feature matrix); the record's ``selection_scope`` states it.
+    ``sweep_id`` stamps the record (default: a fresh stamp); ``tune_all`` shares one stamp
+    across the three tasks (CP4b.1 item B6).
 
     Raises:
         ValueError: If the config has no tuning block or the task is unknown.
@@ -352,10 +369,11 @@ def tune_config(cfg: AlphaLiteConfig, task: str, config_path: Path) -> dict:
         'config_hash': _config_hash(config_path),
         'config_path': config_path.as_posix(),
         'task': task,
-        'sweep_id': sweep_id_now(),
+        'sweep_id': sweep_id or sweep_id_now(),
         'washout': int(cfg.training.washout),
         'cv_folds': int(cfg.training.cv_folds),
         'selection_scope': SELECTION_SCOPE,
+        'selection_rows': None,
         'seeds': [list(p) for p in pairs],
         'reservoir': {
             'n_qubits': cfg.reservoir.n_qubits,
@@ -368,15 +386,18 @@ def tune_config(cfg: AlphaLiteConfig, task: str, config_path: Path) -> dict:
     }
     for task_seed, reservoir_seed in pairs:
         ds = task_data(cfg, task, task_seed)
-        u = np.asarray(ds.u, dtype=np.float64)
-        targets = np.asarray(ds.targets, dtype=np.float64)
+        train_end = int(ds.train_end)
+        u_train = np.asarray(ds.u, dtype=np.float64)[:train_end]
+        targets_train = np.asarray(ds.targets, dtype=np.float64)[:train_end]
         for model in MODELS:
-            candidates = _CANDIDATES[model](cfg, reservoir_seed, u)
+            candidates = _CANDIDATES[model](cfg, reservoir_seed, u_train)
             sel = select_configuration(
-                candidates, targets, ds.train_end, cfg.training.washout,
+                candidates, targets_train, cfg.training.washout,
                 cfg.training.ridge_alphas, cfg.training.cv_folds, task,
                 degenerate_errors=_degenerate_errors(model),
             )
+            record['selection_scope'] = sel.scope
+            record['selection_rows'] = sel.rows  # [washout, train_end): the only rows seen
             record[model][pair_key(task_seed, reservoir_seed)] = _entry(
                 task_seed, reservoir_seed, candidates, sel
             )
@@ -388,6 +409,16 @@ def tune_config(cfg: AlphaLiteConfig, task: str, config_path: Path) -> dict:
     path.write_text(json.dumps(record, indent=2, allow_nan=False), encoding='utf-8')
     logger.info('tuning record written to %s', path)
     return record
+
+
+def tune_all(cfg: AlphaLiteConfig, config_path: Path) -> Dict[str, dict]:
+    """Tune stm, parity and narma under one ``sweep_id`` (CP4b.1 item B6; supersedes the
+    per-record stamps of D015 item 1 for the registered run). Each record keeps its own
+    ``record_sha256``."""
+    from qrc_thresher.task_names import TASKS
+
+    stamp = sweep_id_now()
+    return {task: tune_config(cfg, task, config_path, sweep_id=stamp) for task in TASKS}
 
 
 def load_record(config_path: Path, task: str) -> dict:
@@ -427,20 +458,25 @@ def design_for_pair(record: dict, model: str, task_seed: int, reservoir_seed: in
         ) from None
 
 
-def tune_handler(task: str, config_path: str) -> int:
-    """CLI handler for `qrc-thresher tune TASK --config FILE`. Returns exit code."""
+def tune_handler(task: Optional[str], config_path: str) -> int:
+    """CLI handler for `qrc-thresher tune [TASK] --config FILE`. Returns exit code.
+
+    Without TASK, the three tasks are tuned in one invocation under one sweep_id (item B6);
+    with TASK, that record alone is (re)written under its own stamp.
+    """
     from qrc_thresher.config import load_config
 
     cfg_path = Path(config_path)
     cfg = load_config(cfg_path)
-    record = tune_config(cfg, task, cfg_path)
-    path = record_path(record['config_hash'], task)
-    print(f'tuning record: {path.as_posix()} (sweep {record["sweep_id"]})')
-    for model in MODELS:
-        for key, entry in record[model].items():
-            chosen = {k: entry[k] for k in HYPERPARAMETERS[model]}
-            print(f'  {model} {key}: {chosen} ({entry["n_configs"]} configurations, '
-                  f'{entry["n_validation_evals"]} validation fits)')
+    records = tune_all(cfg, cfg_path) if task is None else {task: tune_config(cfg, task, cfg_path)}
+    for name, record in records.items():
+        path = record_path(record['config_hash'], name)
+        print(f'tuning record: {path.as_posix()} (sweep {record["sweep_id"]})')
+        for model in MODELS:
+            for key, entry in record[model].items():
+                chosen = {k: entry[k] for k in HYPERPARAMETERS[model]}
+                print(f'  {model} {key}: {chosen} ({entry["n_configs"]} configurations, '
+                      f'{entry["n_validation_evals"]} validation fits)')
     return 0
 
 
@@ -463,6 +499,7 @@ __all__ = [
     'selection_metric',
     'sweep_id_now',
     'task_data',
+    'tune_all',
     'tune_config',
     'tune_handler',
     'tuned_config',

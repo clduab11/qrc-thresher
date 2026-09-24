@@ -218,7 +218,6 @@ def qrc_feature_map(cfg: AlphaLiteConfig, ablation: Optional[str] = None) -> Fea
 
 
 MODELS = ('pennylane_qrc', 'no_entangle', 'tuned_qrc', 'esn_linear', 'esn_nonlinear')
-_DESIGN_KEYS = ('depth', 'window', 'encoding_scale', 'circuit_hash')
 
 
 def tuned_feature_map(cfg: AlphaLiteConfig, tuning_record: dict) -> Tuple[FeatureMap, dict]:
@@ -232,7 +231,8 @@ def tuned_feature_map(cfg: AlphaLiteConfig, tuning_record: dict) -> Tuple[Featur
         hash and the sweep id the family evaluator verifies against the rows.
 
     Raises:
-        ValueError: For a missing pair (named by its task seed) or another reservoir.
+        ValueError: For a missing pair (named by its task seed), another reservoir, or a design
+            whose rebuilt circuit hash is not the record's (D011; CP4b.1 item A1).
     """
     from qrc_thresher.tuning import tuned_reservoir
 
@@ -248,14 +248,28 @@ def tuned_feature_map(cfg: AlphaLiteConfig, tuning_record: dict) -> Tuple[Featur
         )
     entries = tuning_record.get('qrc') or {}
     designs: Dict[int, dict] = {}
-    for task_seed, reservoir_seed in seed_pairs_from_config(cfg):
-        entry = entries.get(f'{task_seed}/{reservoir_seed}')
-        if entry is None:
+    reservoirs: Dict[int, object] = {}
+    built: Dict[str, dict] = {}
+    pairs = [(int(t), int(r)) for t, r in seed_pairs_from_config(cfg)]
+    missing = [f'{t}/{r}' for t, r in pairs if f'{t}/{r}' not in entries]
+    if missing:
+        raise ValueError(
+            f'the tuning record has no design_STM for seed pair(s) {", ".join(missing)}'
+        )
+    for task_seed, reservoir_seed in pairs:
+        key = f'{task_seed}/{reservoir_seed}'
+        entry = entries[key]
+        reservoir = tuned_reservoir(cfg, entry, reservoir_seed)
+        if reservoir.circuit_hash != entry.get('circuit_hash'):  # D011; CP4b.1 item A1
             raise ValueError(
-                f'the tuning record has no design_STM for seed pair {task_seed}/{reservoir_seed}'
+                f'design_STM for seed pair {key} rebuilt with hash {reservoir.circuit_hash} but '
+                f'the tuning record says {entry.get("circuit_hash")}; the deployed model must '
+                'equal the validated one (D011)'
             )
         designs[int(reservoir_seed)] = entry
-    reservoirs = {seed: tuned_reservoir(cfg, entry, seed) for seed, entry in designs.items()}
+        reservoirs[int(reservoir_seed)] = reservoir
+        built[key] = {**{k: entry[k] for k in ('depth', 'window', 'encoding_scale')},
+                      'circuit_hash': reservoir.circuit_hash, 'hash_verified': True}
 
     def feature_map(u: np.ndarray, reservoir_seed: int) -> np.ndarray:
         return reservoirs[int(reservoir_seed)].features(np.asarray(u, dtype=np.float64))
@@ -272,8 +286,7 @@ def tuned_feature_map(cfg: AlphaLiteConfig, tuning_record: dict) -> Tuple[Featur
         'sweep_id': tuning_record.get('sweep_id'),
         'tuning_record_sha': tuning_record.get('record_sha256'),
         'tuning_task': tuning_record.get('task'),
-        'designs': {key: {k: entry[k] for k in _DESIGN_KEYS} for key, entry in entries.items()
-                    if int(key.split('/')[1]) in designs},
+        'designs': built,  # the built reservoir's hash, verified against the record
     }
     return feature_map, details
 

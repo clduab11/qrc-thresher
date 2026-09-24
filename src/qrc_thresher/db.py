@@ -15,6 +15,7 @@ from qrc_thresher.proof.run_manifest import (
     CSV_FIELDNAMES,
     RunManifest,
     RunsCsvSchemaError,
+    RunsCsvWriteError,
     check_runs_csv_header,
     manifest_row,
 )
@@ -95,6 +96,8 @@ class ExperimentDB:
         Raises:
             RunsCsvSchemaError: If results/runs.csv exists with a different header.
                 Checked before the database write, so neither store is changed.
+            RunsCsvWriteError: If results/runs.csv cannot be written (locked, unwritable).
+                runs.csv is written before the database, so nothing lands anywhere.
         """
         check_runs_csv_header(Path('results') / 'runs.csv')
         runtime_seconds = None
@@ -112,6 +115,7 @@ class ExperimentDB:
                         pass
                     break
 
+        self._append_to_csv(manifest)  # runs.csv first: a failure leaves no row anywhere
         self._conn.execute(
             """
             INSERT INTO runs (
@@ -145,7 +149,6 @@ class ExperimentDB:
             ),
         )
         self._conn.commit()
-        self._append_to_csv(manifest)
         logger.info("Inserted run %s into ExperimentDB", manifest.run_id)
 
     def _manifest_to_json(self, manifest: RunManifest) -> str:
@@ -157,7 +160,7 @@ class ExperimentDB:
         return json.dumps(row)
 
     def _append_to_csv(self, manifest: RunManifest) -> None:
-        """Append manifest to legacy CSV with file locking."""
+        """Append manifest to runs.csv with file locking; a failure raises RunsCsvWriteError."""
         csv_path = Path('results') / 'runs.csv'
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = csv_path.with_suffix('.csv.lock')
@@ -167,8 +170,8 @@ class ExperimentDB:
                 self._write_csv_row(manifest, csv_path)
         except RunsCsvSchemaError:
             raise
-        except Exception as exc:
-            logger.warning("Failed to write CSV row: %s", exc)
+        except (OSError, filelock.Timeout) as exc:
+            raise RunsCsvWriteError(csv_path, exc) from exc
 
     def _write_csv_row(self, manifest: RunManifest, csv_path: Path) -> None:
         """Write a single row to CSV (refusing a mismatched header), through manifest_row."""

@@ -86,6 +86,15 @@ class RunsCsvSchemaError(ValueError):
     """An existing runs.csv has a header that differs from CSV_FIELDNAMES."""
 
 
+class RunsCsvWriteError(OSError):
+    """runs.csv could not be written; the message names the path. Never swallowed: a sweep
+    whose rows land anywhere but runs.csv must fail loudly (CP4b.1 item A3)."""
+
+    def __init__(self, csv_path: Path, cause: BaseException) -> None:
+        super().__init__(f'could not write {Path(csv_path).as_posix()}: {cause}')
+        self.csv_path = Path(csv_path)
+
+
 def check_runs_csv_header(csv_path: Path) -> None:
     """Refuse to append to a runs.csv whose header differs from CSV_FIELDNAMES.
 
@@ -400,21 +409,22 @@ def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
         csv_path: Path to runs.csv file.
 
     Raises:
-        OSError: If file cannot be written.
+        RunsCsvWriteError: If the file cannot be written (an OSError, naming the path).
         RunsCsvSchemaError: If the file exists with a header that differs from
             CSV_FIELDNAMES. Nothing is appended in that case.
     """
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    check_runs_csv_header(csv_path)
-    write_header = not csv_path.exists() or csv_path.stat().st_size == 0
-
     row = manifest_row(manifest)
-
-    with csv_path.open('a', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
+    try:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        check_runs_csv_header(csv_path)
+        write_header = not csv_path.exists() or csv_path.stat().st_size == 0
+        with csv_path.open('a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+    except OSError as exc:
+        raise RunsCsvWriteError(csv_path, exc) from exc
 
     logger.info('Manifest appended to %s (run_id=%s)', csv_path, manifest.run_id)
 
