@@ -217,13 +217,72 @@ def qrc_feature_map(cfg: AlphaLiteConfig, ablation: Optional[str] = None) -> Fea
     return feature_map
 
 
-MODELS = ('pennylane_qrc', 'no_entangle', 'esn_linear', 'esn_nonlinear')
+MODELS = ('pennylane_qrc', 'no_entangle', 'tuned_qrc', 'esn_linear', 'esn_nonlinear')
+_DESIGN_KEYS = ('depth', 'window', 'encoding_scale', 'circuit_hash')
+
+
+def tuned_feature_map(cfg: AlphaLiteConfig, tuning_record: dict) -> Tuple[FeatureMap, dict]:
+    """design_STM(pair) of a tuning record as a G0.7 feature map (D011; PI ruling 4).
+
+    Every seed pair of ``cfg`` must have an entry in the record's ``qrc`` section, and the
+    record must describe this config's reservoir (n_qubits, readout, backend).
+
+    Returns:
+        (feature_map, details) where details carry the designs per pair, the tuning config
+        hash and the sweep id the family evaluator verifies against the rows.
+
+    Raises:
+        ValueError: For a missing pair (named by its task seed) or another reservoir.
+    """
+    from qrc_thresher.tuning import tuned_reservoir
+
+    reservoir = tuning_record.get('reservoir') or {}
+    ours = {'n_qubits': cfg.reservoir.n_qubits, 'readout': cfg.reservoir.readout,
+            'backend': cfg.reservoir.backend}
+    mismatched = {k: (reservoir.get(k), v) for k, v in ours.items() if reservoir.get(k) != v}
+    if mismatched:
+        raise ValueError(
+            'the tuning record describes another reservoir: '
+            + ', '.join(f'{k} {have!r} vs config {want!r}'
+                        for k, (have, want) in mismatched.items())
+        )
+    entries = tuning_record.get('qrc') or {}
+    designs: Dict[int, dict] = {}
+    for task_seed, reservoir_seed in seed_pairs_from_config(cfg):
+        entry = entries.get(f'{task_seed}/{reservoir_seed}')
+        if entry is None:
+            raise ValueError(
+                f'the tuning record has no design_STM for seed pair {task_seed}/{reservoir_seed}'
+            )
+        designs[int(reservoir_seed)] = entry
+    reservoirs = {seed: tuned_reservoir(cfg, entry, seed) for seed, entry in designs.items()}
+
+    def feature_map(u: np.ndarray, reservoir_seed: int) -> np.ndarray:
+        return reservoirs[int(reservoir_seed)].features(np.asarray(u, dtype=np.float64))
+
+    details = {
+        'reservoir': 'pennylane_qrc',
+        'kind': 'quantum',
+        'design': 'tuned',
+        'backend': cfg.reservoir.backend,
+        'n_qubits': cfg.reservoir.n_qubits,
+        'readout': cfg.reservoir.readout,
+        'ablation': None,
+        'tuning_config_hash': tuning_record.get('config_hash'),
+        'sweep_id': tuning_record.get('sweep_id'),
+        'tuning_record_sha': tuning_record.get('record_sha256'),
+        'tuning_task': tuning_record.get('task'),
+        'designs': {key: {k: entry[k] for k in _DESIGN_KEYS} for key, entry in entries.items()
+                    if int(key.split('/')[1]) in designs},
+    }
+    return feature_map, details
 
 
 def evaluate_config(
     cfg: AlphaLiteConfig,
     protocol: Optional[G07Protocol] = None,
     model: str = 'pennylane_qrc',
+    tuning_record: Optional[dict] = None,
 ) -> dict:
     """Evaluate G0.7 on the seed pairs of an experiment config.
 
@@ -231,17 +290,24 @@ def evaluate_config(
         cfg: Experiment config (seed pairs, readout, reservoir size).
         protocol: Registered protocol (default: load_protocol()).
         model: 'pennylane_qrc' for the configured quantum reservoir, 'no_entangle' for its
-            matched no-entangle ablation (D010), or an ESN preset ('esn_linear',
-            'esn_nonlinear') with N matched to the QRC feature count.
+            matched no-entangle ablation (D010), 'tuned_qrc' for design_STM(pair) of
+            ``tuning_record`` (D011), or an ESN preset ('esn_linear', 'esn_nonlinear') with N
+            matched to the QRC feature count.
+        tuning_record: The STM tuning record (``tuning.load_record``); required by 'tuned_qrc'.
 
     Raises:
-        ValueError: For an unknown model, or a config the protocol refuses.
+        ValueError: For an unknown model, a config the protocol refuses, or a tuned model
+            without a usable record.
     """
     if model not in MODELS:
         raise ValueError(f'unknown G0.7 model {model!r}; choose from {list(MODELS)}')
     protocol = protocol or load_protocol()
     check_config(cfg, protocol)
-    if model in ('pennylane_qrc', 'no_entangle'):
+    if model == 'tuned_qrc':
+        if tuning_record is None:
+            raise ValueError("model 'tuned_qrc' needs the STM tuning_record (run `tune stm`)")
+        feature_map, details = tuned_feature_map(cfg, tuning_record)
+    elif model in ('pennylane_qrc', 'no_entangle'):
         ablation = None if model == 'pennylane_qrc' else model
         feature_map = qrc_feature_map(cfg, ablation=ablation)
         details = {
@@ -252,6 +318,7 @@ def evaluate_config(
             'depth': cfg.reservoir.depth,
             'readout': cfg.reservoir.readout,
             'window': cfg.reservoir.window,
+            'encoding_scale': cfg.reservoir.encoding_scale,
             'ablation': ablation,
         }
     else:
