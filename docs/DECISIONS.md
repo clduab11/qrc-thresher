@@ -455,3 +455,386 @@ ruled that the phase_random and haar plugins refuse `reservoir_seed=None`. D010 
 committed; any change is proposed as D011.
 
 ---
+## 2026-09-23: D011 — Matched tuning budgets, and the QRC's hyperparameters
+
+**Decision**: Every tuned model is tuned by one tuner under one budget, fixing the CP2 carry-overs
+(the tuning-budget rule, the ESN bias, the ESN tuning metric) and the CP3 carry-over (the encoding
+scale). Items marked (builder) were proposed by the builder at checkpoint CP4a; the rest are the
+PI's CP4 instructions and rulings.
+
+One tuner
+- For each (task, seed pair), every configuration of the model's grid is scored on `cv_folds` = 5
+  contiguous validation blocks of the training rows after the washout (D012), with the harness
+  readout (`readout.fit_ridge_cv_batched`), one feature matrix per configuration. The best mean
+  score wins; ties go to grid order. A configuration whose features or states are non-finite, or
+  whose predictions are degenerate (`metrics.scoring.DegeneratePredictionError`), is flagged and
+  never selected; if every configuration is flagged the run fails. Test rows are never touched.
+- The deployed model equals the validated one: the run row's `circuit_hash` (the ESN's weight
+  hash, the RKS hash) equals the tuning record's. `n_configs` and `n_validation_evals` are logged
+  on every row.
+- Selection metric per task, aligned with D10: STM, the memory sum over k = 1..K of the squared
+  Pearson correlation between prediction and u_{t−k} on the validation block (k = 0 excluded),
+  named `stm_memory`; parity, held-out accuracy; NARMA-10, NRMSE, lower is better. The ESN's
+  tuning score changes from k = 0..K (D009) to k = 1..K. PI ruling 10 (CP4b): the k = 0
+  exclusion is one scoring function, `metrics.scoring.stm_memory`, used by every writer, every
+  tuner and every ablation; there are no per-member scoring paths.
+- (builder) The tuner lives in `qrc_thresher/tuning.py` as one model-agnostic selection routine
+  over a list of candidate feature matrices; `baselines/esn.py`'s `tune_esn` becomes a wrapper
+  around it, keeping only the ESN-specific lines (the grid, the draw, the states). Each
+  configuration record carries the model's hyperparameters, its `circuit_hash`, `score`,
+  `degenerate` and `reason`; the record states the metric name and whether higher or lower wins.
+
+Trigger and record
+- Tuning is triggered only by a `tuning:` block in the config, holding the three grids `qrc`,
+  `esn` and `rks` (below). `alpha_lite.yaml`, `windowed_w2.yaml` and `windowed_w4.yaml` have
+  none, so their behaviour and the CP3 routing tests are unchanged. (builder) When a `tuning`
+  block is present, `baseline.esn_grid` must be absent: the ESN grid is `tuning.esn`. Without a
+  tuning block the ESN is still tuned in-line over `baseline.esn_grid` as D009 describes
+  (its rows are `design=tuned` with an empty sweep_id), and RKS runs at D010's default
+  (σ = 1, d = 1) as `design=default`.
+- `qrc-thresher tune TASK --config FILE` runs the tuner for every seed pair of the config and for
+  every tuned model (QRC, ESN, RKS), and writes the tuning record
+  `results/tuning/<config_hash>/<task>.json`, keyed by (task_seed, reservoir_seed), with depth,
+  window, encoding_scale, circuit_hash, n_configs, n_validation_evals, the validation score of
+  every configuration and the winner; the record carries one `sweep_id`, a UTC stamp, that every
+  row deployed from it inherits. (builder) The record has one section per model (`qrc`, `esn`,
+  `rks`), each keyed by "<task_seed>/<reservoir_seed>", plus `config_hash`, `task`,
+  `selection_metric`, `washout` and the grids. PI ruling 3 (CP4b): the record also carries
+  `selection_scope: train_cv` (the tuner asserts that no test index is touched), `cv_folds`, the
+  seeds used (`seeds`, the list of pairs), the reservoir block it was tuned for, and its own
+  SHA-256 (`record_sha256`, over the canonical JSON of the record without that field); every
+  row deployed from it inherits `sweep_id` and `tuning_record_sha`. The tuner varies a deep copy
+  of the config and builds every QRC configuration through `reservoir_from_config`.
+- `run`, the engine and `ablation` read the record when the config has a tuning block, and fail
+  if it is missing. `run TASK` deploys design_TASK(pair) and writes `design=tuned`;
+  `ablation NAME TASK` builds the matched ablation of design_TASK(pair), whose circuit_hash is the
+  design's hash plus the D010 suffix, and writes `design=inherited`; `baseline TASK` deploys the
+  record's ESN and RKS configurations and writes `design=tuned`.
+- The tuned designs are per task: design_STM(pair), design_parity(pair), design_NARMA(pair).
+  G0.7, G1, G2.5 and G3 use design_STM; G2 uses design_parity; G4 uses design_NARMA.
+- (builder) G1(b) (D014) needs design_STM evaluated on the parity task. `run` and `ablation`
+  take `--design-task {stm,parity,narma}` (default: the task being run) naming the task whose
+  tuned design is deployed; the row's task_name stays the task run, and its circuit_hash
+  identifies the design. `run`, `ablation` and `baseline` take `--design {tuned,default}`
+  (default `tuned`); see "Untuned defaults".
+
+Grids, 60 configurations each
+- ESN: spectral_radius {0.8, 0.9, 0.95, 0.99, 1.0} × input_scaling {0.1, 0.5, 1.0} × leak_rate
+  {0.1, 0.3, 0.5, 1.0}, unchanged from D009, now with an input bias: b_in ~ Uniform(−1, 1) of
+  shape (N,), drawn after W_in from the same stream (W and W_in are unchanged for every seed),
+  scaled by input_scaling and added inside the tanh:
+  x_t = (1 − a) x_{t−1} + a tanh(ρ Ŵ x_{t−1} + s (W_in u_t + b_in)). `weight_hash` covers b_in.
+  D009's "no bias" is superseded. The presets `esn_linear` and `esn_nonlinear` gain the bias and
+  their G0.7 results are re-run as findings with no new registered expectation. The G0 smoke bar
+  (1.0) and test_esn's known-answer bar (0.75 N) are not moved; if either goes red under the
+  bias, it is reported.
+- QRC: depth {1, 2, 3, 4, 5} × window {1, 2, 4} × encoding_scale {π/4, π/2, 3π/4, π}. The angles
+  for depth L are `build_reservoir_params(depth=L, rng=default_rng(reservoir_seed))`, so each depth
+  is a fixed function of the seed and a different depth is a different draw (the builder draws
+  all thetas then all phis at the given depth). This is disclosed rather than changed because
+  depth 3 at π must stay today's circuit, so that the CP3b findings remain the untuned default.
+- RKS: sigma in 20 log-spaced values from 0.1 to 10 (numpy.logspace(−1, 1, 20)) × window
+  d {1, 2, 4}. Bandwidth σ/√d on the zero-padded input window of dimension d (D13):
+  x_t = (u_t, u_{t−1}, …, u_{t−d+1}) with 0 where the index is negative, and
+  φ(x_t) = cos(W x_t + b) with W of shape (F, d), W_{ij} ~ N(0, (σ/√d)²), drawn row-major from
+  the stream `default_rng([reservoir_seed, 3])`, then b ~ Uniform(0, 2π) of shape (F,). F is the
+  reservoir's feature count as D010. At d = 1 the stream positions of today's draw are unchanged
+  and only the scale of W changes (σ/F becomes σ). (builder) The RKS hash is the SHA-256 of
+  "rks:n_features=<F>,sigma=<repr(σ)>,window=<d>:" followed by the bytes of W and b.
+- (builder) RKS leaves the ablation command: `ablation random_features` is removed, and
+  `baseline TASK` runs RKS when `random_features` is enabled, with the same tuner. Baseline rows
+  are named by model and task: `esn`, `esn_parity`, `esn_narma` and `rks`, `rks_parity`,
+  `rks_narma` (`esn` and `esn_narma` are D009's names). PI ruling 2 (CP4b): the (model, task) →
+  task_name mapping and the (member, task) → row-selector mapping live in one helper
+  (`gates/comparative.py`) used by the family evaluator and `summary`; nothing else parses
+  task_name suffixes. The suffix convention is logged as debt.
+
+Encoding scale
+- A config key `reservoir.encoding_scale` (default π) and a `WindowedReservoir` field
+  `encoding_scale`, replacing `windowed_qrc`'s import of `_ENCODING_SCALE`;
+  `reservoirs/pennylane_qrc.py` stays frozen at π as the w = 1 reference. The circuit hash's
+  preimage includes the scale unconditionally (PI ruling 8, CP4b): after D010's optional
+  ",window=<w>" the hash appends ",encoding_scale=<repr(float(scale))>" for every reservoir, then
+  any ablation suffix. So `WindowedReservoir.circuit_hash` at w = 1 is no longer
+  `compute_circuit_hash(params)` (D010's rule is superseded); the features at w = 1 and π stay bit
+  identical to today. Schema 1.4 already breaks row compatibility and no gated manifest exists;
+  no frozen artifact or untouched test pins a literal circuit hash (checked at CP4b). G0.7's
+  model_details record the scale. G0.5 gains the scale axis (D014's
+  companion item in the CP4 instructions): `qiskit_features` takes `encoding_scale` (default π),
+  and the gate adds the registered cases `G05_SCALE_CASES` = {π/4, π/2, 3π/4} × (4, 3, 137) ×
+  w ∈ {1, 2, 4} × both readouts (18 cases), separate from `G05_TRIPLES`, for 34 cases in all.
+
+Untuned defaults
+- Untuned defaults are run and reported beside the tuned rows, as `design=default`: the QRC at
+  depth 3, scale π, at w = 1 (today's circuit) and at w = 2 (design (a) as D010 defaulted it);
+  the ESN as the `esn_nonlinear` preset with the bias (n_configs 1, n_validation_evals 0).
+  (builder) `run TASK --design default` writes both QRC rows per pair; `baseline TASK --design
+  default` writes the ESN preset row; `ablation NAME TASK --design default` writes the matched
+  ablation of the default design at w = 1 and w = 2. Default rows are reported, never joined
+  into a family test. PI ruling 1 (CP4b): exactly one default QRC row per member and task enters
+  the default table, and the family evaluator must never see two candidate QRC rows for one
+  pair (two candidates make the member INSUFFICIENT_EVIDENCE, never a choice). So the w = 2 row
+  carries `design=default` and is the compared default (design (a) as D010 defaulted it, the
+  design of the CP3b findings), and the w = 1 row carries its own label `design=default_w1` and
+  is reporting-only (mean ± std beside the table). `COMPARATIVE.v1.yaml` names both.
+
+G0.7 v1 on the tuned design
+- `g07.MODELS` gains `tuned_qrc`, whose feature map for a pair is design_STM(pair) from the
+  record. It runs on `alpha_lite.yaml`'s 3 pairs (i < 3) under the frozen every-seed rule; the
+  parity clause on that design is a finding. G0.7 v1 stays frozen. (builder) `gate G0.7 --model
+  tuned_qrc --config configs/alpha_lite.yaml --tuning-config configs/comparative.yaml`: the
+  pairs, readout and measurement come from the experiment config, the designs from the tuning
+  config's record, which must hold every pair of the experiment config and share its n_qubits,
+  readout and backend. The model details record each pair's depth, window, scale and hash, the
+  tuning config's hash and the sweep_id.
+
+Cost, host
+- About 8 s per QRC configuration on a continuous task at T = 500 (depth 5 about 1.7× depth 3;
+  parity rows are cached), so the sweep is about 60 × 12 × 2 × 8 s ≈ 3.2 h, plus the ablation
+  and G0.7 runs, about 4 h. It is a findings run, never a test; the builder runs the plumbing on
+  grids of 2–3 configurations.
+
+**Supersedes**: D009's "no bias" and its ESN tuning score over k = 0..K; D010's "RKS ... input
+stays u_t, and its bandwidth stays σ/F with σ = 1, until D13" and its RKS hash of F, σ, W and b;
+D010's listing of `random_features` among the ablation command's names. The ESN and RKS
+budgets of D009 (60 configurations, 300 validation fits) are now matched by the QRC.
+
+**Consequences**: Comparative rows exist only for configs with a tuning block, after `tune` has
+written the record. The QRC's untuned default (depth 3, π, w = 1 and w = 2) is reported beside
+the tuned design, never in its place. The CP3b G0.7 findings on windowed_w2/w4 stand as the
+untuned default's findings. Any ESN row written before this decision has a different hash.
+
+**Rationale**: The CP2 manifest showed the ESN searching 60 configurations and the QRC none.
+Giving every model the same budget over its own hyperparameters, chosen on validation blocks
+with the harness readout, is what makes a margin a statement about the models rather than about
+the search. The encoding scale enters only through the registered grid because the CP3b failure
+(RY(πu) on Uniform(−1, 1) inputs gives zero-mean harmonics) would otherwise invite a hand-picked
+fix. The RKS bandwidth σ/√d is the standard random-Fourier-feature scaling for a d-dimensional
+input, which D13 found the code did not implement.
+
+**Decided by**: PI, 2026-09-23, in the CP4 instructions and rulings (details marked (builder)
+proposed by the builder at CP4a). D011 is frozen once committed.
+
+---
+## 2026-09-23: D012 — One washout for every model (D16)
+
+**Decision**: `training.washout` = 50 replaces `baseline.esn_washout`, which is refused
+(`BaselineConfig` gains `extra='forbid'`; `alpha_lite.yaml`, `windowed_w2.yaml`,
+`windowed_w4.yaml` and the tiny config of tests/test_baseline_run.py change).
+- Every writer drops rows [0, washout) from training and tuning: `engine.py` (its three task
+  branches), `commands/run.py` (three), `commands/ablation.py`, `commands/baseline.py`, the tuner
+  of D011, and `proof/benchmark_health.py`'s ESN smoke check (hard-coded 50 today). Test rows
+  stay [train_end, T). Scoring is unchanged: the test rows never included the padded rows.
+- The value must be at least max(K, the 10 NARMA-10 zero rows plus its transient,
+  parity_window − 1, w − 1) and must leave at least 2·cv_folds training rows. At T = 500 and
+  train_frac 0.7 it leaves 300 rows = 5 × 60; the T = 100 test configs leave 20. (builder) The
+  config refuses a washout below `task.delay_max`, below 10 on NARMA-10, below
+  `task.parity_window − 1`, below `reservoir.window − 1`, or one that leaves fewer than
+  2·cv_folds rows in [washout, train_end); the transient beyond the 10 zero rows is covered by
+  the registered value, 50, and is not a validator. PI (CP4b): the validator enforces structural
+  minima only; the NARMA-10 transient is a registered choice. At u ~ Uniform(0, 0.5) the
+  NARMA-10 recurrence contracts by roughly 0.5–0.6 per step near its stationary mean, so 50
+  steps put the transient below 1e-11.
+- G0.7 v1 is frozen at 50 (its own `stm.washout` and `parity.washout`) and unchanged.
+- Proof: a spy on `readout.fit_ridge_cv`, `readout.fit_ridge_cv_batched`, g07's imported
+  `fit_ridge_cv_batched` and sklearn's `RidgeCV.fit` shows no target row with index below the
+  washout, and no NARMA-10 row 0..9, reaching any fit on any path. (builder) The test marks the
+  rows [0, washout) of every task's targets with a sentinel value before the writer runs and
+  asserts that no fitted target contains it.
+
+**Supersedes**: D009's `baseline.esn_washout` (same value, new home) and its statement that
+"QRC runs still train on [0, train_end), zero-padded targets included (D16)".
+
+**Consequences**: Every model, quantum or classical, is fitted and tuned on the same rows
+[washout, train_end) and scored on the same rows [train_end, T). The QRC's training set shrinks
+by 50 rows, so its metrics on `alpha_lite.yaml` change slightly from the CP2/CP3 values; those
+were never registered expectations. A stale `esn_washout` key fails loudly instead of being
+ignored, which the previous `BaselineConfig` allowed.
+
+**Rationale**: STM targets are zero-padded for t < k, NARMA-10's first ten targets are exactly
+zero, and parity targets before window − 1 are zero. Fitting on them teaches every model a
+false constant, and the ESN alone was protected. One washout for every model removes a
+difference between arms that has nothing to do with the models.
+
+**Decided by**: PI, 2026-09-23, in the CP4 instructions (the validator list marked (builder)
+proposed by the builder at CP4a). D012 is frozen once committed.
+
+---
+## 2026-09-23: D013 — Paired statistics and the registered family (D3, D4, D11, D20)
+
+**Decision**: Every comparative gate is a paired comparison decided inside one pre-registered
+family. Items marked (builder) were proposed by the builder at checkpoint CP4a.
+
+One config file per comparison
+- Every arm of a comparison is run from one config file, so all rows share `config_hash`:
+  `run TASK`, `baseline TASK` and `ablation NAME TASK` take the task as an argument (`baseline`
+  gains parity; `run` runs every seed pair of the config, serial and parallel; `run --seed` is
+  removed).
+
+Pairing
+- A paired comparison joins two arms on (config_hash, sweep_id, design, task_seed,
+  reservoir_seed): tuned rows against tuned rows (G2, G3, G4), tuned rows against their
+  inherited ablations (G1b, G2.5). Budget equality (`n_configs`, `n_validation_evals`) is
+  required between two tuned arms, pair by pair. An inherited arm must instead match by design:
+  per pair, the ablation row's `circuit_hash` equals the tuned design's hash plus the ablation
+  suffix (D010).
+- (builder) Arms are identified by the tuning record: a QRC arm is the rows of the named task
+  whose `circuit_hash` equals the record's design hash for that pair (design_STM, design_parity or
+  design_NARMA as D014 names); an inherited arm is the `ablation:<name>` rows whose hash equals
+  that design hash plus the suffix; the classical arms are the `esn*` and `rks*` rows with
+  `design=tuned`.
+- A pair present in one arm only, a duplicate pair within an arm that is not an exact rerun (the
+  same circuit_hash and the same value collapse to one row; anything else is refused), a budget or
+  design mismatch, or an all-zero or non-finite difference vector gives INSUFFICIENT_EVIDENCE
+  naming the pairs. Nothing is truncated or pooled, and row order never matters.
+
+Statistics per comparison
+- n_pairs; the mean difference (arm A minus arm B, in the arms' registered order); the paired
+  t-test, one-sided in the registered direction; the Wilcoxon signed-rank test with the
+  alternative in the registered direction, zero_method `wilcox`, the effective n (non-zero
+  differences) reported, and method `exact` when there are no ties among the non-zero absolute
+  differences (`approx` otherwise); a 95% BCa bootstrap CI of the mean difference
+  (B = 2000, rng seed 20260923, `metrics.stats.bca_ci`); d_z = mean(diff)/sd(diff) with
+  sd over n − 1, written as null when sd = 0. `paired_test`'s field is renamed `d_z` (null at
+  zero variance, no longer 0.0). `power_analysis` takes a required `sided` argument (1 or 2)
+  and uses the noncentral t distribution of the paired t statistic: 12 pairs detect d_z ≥ 0.77
+  at 80% power one-sided, 5 pairs d_z ≥ 1.36; G6's call passes `sided=2`. (builder) The
+  two-sided p-value of the paired t-test is reported beside the one-sided one; a t statistic
+  that is not finite (sd = 0) is written as null with the p-value scipy gives (0 or 1). Every
+  JSON is written with `allow_nan=False`.
+- (builder) The comparison lives in `qrc_thresher/metrics/paired.py`: `compare_arms(arm_a,
+  arm_b, ...)` takes two DataFrames of manifest rows and returns the pairing verdict and every
+  statistic; the gates call nothing else for a comparison.
+
+Decision rule
+- The decision statistic is the one-sided paired-t p-value; Holm adjusts the five family members
+  together (`metrics.stats.holm_bonferroni`, unchanged); the Wilcoxon p and the CI are reported,
+  never decided on. A gate PASSes iff its adjusted p ≤ 0.05 and its floor holds, where one is
+  registered (and, for G1, its G0.7 clause). A significant result in the other direction is
+  reported as "baseline better" with its two-sided p; the gate FAILs.
+- The family is evaluated as a unit: `qrc-thresher gate family --config configs/comparative.yaml`
+  (and any member name, G1, G2, G2.5, G3 or G4, which evaluates the whole family and prints that
+  member) computes all five raw p-values in one pass, m = 5 fixed. A member that is INSUFFICIENT
+  contributes p = 1 and is shown as INSUFFICIENT, never as FAIL. It writes one timestamped family
+  JSON plus one per gate, never overwriting, each carrying config_hash, sweep_id, the git commit,
+  the measurement label, the protocol hash, n_pairs and every statistic. (builder) File names:
+  `results/gates/COMPARATIVE.v1.<UTC stamp>.json` and `results/gates/<gate>.<UTC stamp>.json`,
+  in G0.7's style. The family reads `results/runs.csv` restricted to rows whose config_hash is
+  the config's and whose sweep_id is the tuning record's. test_baseline_run's fixed-name read of
+  G3.json changes accordingly. PI ruling 7 (CP4b): `gate G1`..`gate G4` (and `G2.5`) evaluate
+  the whole family, print that member, exit with that member's code and write both files; the
+  per-gate file carries the family file's path and SHA-256 (the family file is the record, the
+  per-gate file a view). PI ruling 9: `COMPARATIVE.v1.yaml` names the exact set of p-values
+  that enter `holm_bonferroni` (`statistics.holm_family`: the one-sided paired-t p of each of
+  G1, G2, G2.5, G3 and G4), and the family JSON echoes it as `holm_family`.
+
+Registration
+- `configs/gates/COMPARATIVE.v1.yaml`, a frozen pydantic spec with its SHA-256 pinned by a test,
+  in G0.7 v1's style: the members, their metrics, directions and floors, alpha 0.05, min_pairs
+  12, B and the bootstrap seed, the washout, and the grids by reference to `comparative.yaml`.
+- `configs/comparative.yaml`: seeds 42/137 + i for i < 12, `training.washout` 50,
+  `task.parity_window` 3, the tuning block with the three grids, `baseline.enabled`
+  [esn, random_features], the same readout and measurement as `alpha_lite.yaml`, and no gates
+  block. The `gates:` block and `GateThresholds` are removed from every config; the thresholds
+  they held (G1 MC > 1.0 and 20% margin, G2 0.70 and 0.60, G2.5 one SE) are superseded by D014.
+
+Manifest schema 1.4
+- New columns: `secondary_metrics` (JSON), `device` and `precision` (the constants `cpu` and
+  `float64` on every row until D006's GPU extra exists), `design` (tuned | default | default_w1 |
+  inherited; PI ruling 1), `sweep_id` (the tuning record's stamp; empty for a config without a
+  tuning block) and `tuning_record_sha` (the record's SHA-256; empty likewise; PI ruling 3).
+- STM rows carry the memory sum over k ≥ 1 as the primary metric under the name `stm_memory`
+  (builder's proposal), with `mc_total` (k = 0..K) and `mc_k0` as secondary metrics; MC_0 is no
+  longer folded into any decision. G5 reads `stm_memory` (its semantics wait for Session 2).
+  Parity rows keep `accuracy`, NARMA-10 rows `nrmse`.
+- (builder) `proof/run_manifest.py` exposes one row builder, `manifest_row(manifest)`, and
+  `db.py` writes its CSV rows through it, so the two writers cannot drift. The runs.csv header
+  guard refuses old files, as designed; the referee archives any existing `results/runs.csv`.
+
+**Supersedes**: the gate code's list-position pairing and `[:min_len]` truncation (D3), the
+single-p Holm (D4), the unpaired means and pooled SE of G1, G2 and G2.5 (D11), `cohens_d` and the
+two-sided normal-approximation `power_analysis` (D20), `run --seed`, the fixed-name gate JSONs
+of G1–G4, D009's row contract "task_name esn with metric mc" (now `stm_memory`), and the
+`gates:` block of D001's config.
+
+**Consequences**: No comparative verdict exists until the tuning record and every arm's rows
+exist under one config hash and one sweep_id. A missing pair makes a gate INSUFFICIENT rather
+than silently shrinking the sample. Twelve pairs give 80% power for d_z ≥ 0.77 one-sided at
+α = 0.05 before the Holm adjustment, so a real margin smaller than that will often be reported as
+not significant; that is disclosed, not hidden.
+
+**Rationale**: Pairing by seed removes the between-seed variance of the task sequence from the
+comparison, which list-position pairing did only by accident. Registering the family and its
+size before the sweep is what makes the Holm adjustment meaningful. Reporting the Wilcoxon p and
+the BCa CI alongside the decision statistic shows whether the parametric decision rests on a
+few pairs.
+
+**Decided by**: PI, 2026-09-23, in the CP4 instructions and rulings (items marked (builder)
+proposed by the builder at CP4a). D013 is frozen once committed.
+
+---
+## 2026-09-23: D014 — The comparative gates, re-registered (D10, D11)
+
+**Decision**: G1, G2, G2.5, G3 and G4 are the five members of the family of D013, registered in
+`configs/gates/COMPARATIVE.v1.yaml`. Every margin below is the paired comparison of D013 on the
+tuned designs of D011, decided by its Holm-adjusted one-sided paired-t p-value at α = 0.05 with
+at least 12 pairs. Items marked (builder) were proposed by the builder at checkpoint CP4a.
+
+- G1: (a) design_STM passes G0.7 v1 on `alpha_lite.yaml`'s 3 pairs; (b) the paired margin of
+  design_STM over its inherited no-entangle ablation on parity accuracy under the z_only readout
+  passes the family rule. D014 records that (b)'s metric was chosen with the CP3b G0.7 findings
+  known: the no-entangle ablation of the w = 2 reservoir beats the full circuit on linear memory
+  (STM S 0.47/0.77/0.75 against 0.153/0.194/0.255) while the full circuit alone solves parity.
+  The STM-memory margin of design_STM over no-entangle is reported beside (b), not gated.
+  (builder) Clause (a) is read from the newest `results/gates/G0.7.tuned_qrc.*.json`; the family
+  JSON records which file, and G1 is INSUFFICIENT when none exists. PI ruling 4 (CP4b):
+  "newest" is the discovery rule only; the evaluator verifies that the file's tuning config hash
+  and sweep_id match the rows under evaluation and records the file's path and SHA-256 in the
+  COMPARATIVE evidence; a mismatch is INSUFFICIENT_EVIDENCE with both hashes printed.
+- G2: design_parity's mean parity accuracy > 0.70 (the floor), and its paired margin over the
+  tuned RKS on parity accuracy passes the family rule. G2 is a baseline comparison, not an
+  entanglement comparison: D014 supersedes D010's listing of G2 among the z_only-restricted
+  comparisons; G1b and G2.5 stay z_only, and are INSUFFICIENT under any other readout.
+- G2.5: the paired margin of design_STM over its inherited Haar ablation on the STM memory sum
+  (k ≥ 1).
+- G3: the paired margin of design_STM over the tuned ESN on the STM memory sum (k ≥ 1); MC_0 is
+  reported separately (the mean `mc_k0` of each arm), never compared.
+- G4: design_NARMA's mean NRMSE < 0.60 (the floor, BUILD_SPEC §15.7), and its paired margin over
+  the tuned ESN on NARMA-10 NRMSE (lower is better) passes the family rule.
+- Every gate also reports the default-design comparison beside the tuned one, never gated and
+  never part of the Holm family. (builder) The compared default QRC design is `design=default`
+  (depth 3, scale π, w = 2; PI ruling 1); the w = 1 row (`default_w1`) is reported as a mean
+  beside it. G1b and G2.5 pair the default with the matched ablation of that default design
+  (`ablation ... --design default`); G3 and G4 pair it with the default ESN (`esn_nonlinear`
+  with the bias); G2 pairs it with the tuned RKS, which has no default. Each default comparison
+  carries the same statistics as the tuned one, and INSUFFICIENT when its rows are missing.
+  PI ruling 5 (CP4b), rationale: G2's RKS clause is a task-triviality floor, so the strongest
+  RKS is the honest comparator in both tables; G3 and G4 are contests, so budgets must match
+  (tuned against tuned, default against default). The tuned design is the verdict-bearing
+  design: the default table is reported in the same JSON with identical statistics and can
+  never flip a verdict; a member that passes on the default and fails on the tuned design is
+  FAIL.
+- Registered directions: G1b, G2, G2.5 and G3 test "QRC greater"; G4 tests "QRC less".
+  Registered metrics: parity accuracy (G1b, G2), `stm_memory` (G2.5, G3), `nrmse` (G4).
+
+**Supersedes**: the G1 of D001's config (`MC > 1.0` with a 20% unpaired margin, D10), the
+unpaired G2 (0.70 against an RKS ceiling of 0.60) and the pooled-SE G2.5 of the gate code (D11),
+BUILD_SPEC §15.6's "within 1 SE on at least one task" for G3 (D18), and the untested G4. The G2
+accuracy floor 0.70 and the G4 NRMSE floor 0.60 are kept as floors.
+
+**Consequences**: G1 depends on the tuned design's G0.7 verdict and so on the encoding-scale
+grid of D011: if design_STM fails G0.7 v1 on the 3 pairs, G1 FAILs whatever its margin. A
+significant margin in the baseline's favour is a reported finding ("baseline better"), not an
+INSUFFICIENT. The family cannot be evaluated until `tune`, the runs, the ablations and the
+baselines have all been written from `comparative.yaml`; the referee runs them on the host.
+
+**Rationale**: G1(b) tests the one thing the CP3 findings showed entanglement doing (the
+cross-delay product parity needs), against the one ablation that removes it, at the readout
+where the ablation isolates it (D010). G2, G3 and G4 are baseline comparisons under matched
+budgets, which is the bar the 2026 literature sets. Choosing (b) after seeing the CP3b G0.7
+findings is a post-hoc choice, and D014 says so rather than presenting it as pre-registered.
+
+**Decided by**: PI, 2026-09-23, in the CP4 instructions and rulings (items marked (builder)
+proposed by the builder at CP4a). D014 is frozen once committed.
+
+---
