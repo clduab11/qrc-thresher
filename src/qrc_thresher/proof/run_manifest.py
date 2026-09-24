@@ -1,7 +1,12 @@
-"""Run manifest writer (schema v1.1).
+"""Run manifest writer (schema 1.4).
 
-Every run writes a manifest record. Records are appended to results/runs.csv.
-Cumulative compute is tracked in results/cumulative_compute.json.
+Every run writes a manifest record. Records are appended to results/runs.csv through one row
+builder, ``manifest_row``, which db.py shares (docs/DECISIONS.md D013). Cumulative compute is
+tracked in results/cumulative_compute.json.
+
+Schema history: 1.1 the base record; 1.2 adds measurement_model (D004); 1.3 adds the search
+budget n_configs and n_validation_evals (D009); 1.4 adds secondary_metrics, device, precision,
+design, sweep_id and tuning_record_sha (D011, D013, PI rulings 1 and 3).
 """
 
 from __future__ import annotations
@@ -15,7 +20,7 @@ import platform as _platform
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
@@ -32,9 +37,15 @@ _RUNS_CSV = Path('results') / 'runs.csv'
 _COMPUTE_JSON = Path('results') / 'cumulative_compute.json'
 _WATTS_PER_RUN = 15.0  # documented constant: estimated CPU power draw per run (watts)
 
-# 1.2 adds measurement_model (docs/DECISIONS.md D004); 1.3 adds the search budget,
-# n_configs and n_validation_evals (D009).
-SCHEMA_VERSION = '1.3'
+SCHEMA_VERSION = '1.4'
+
+# The constants every row carries until D006's GPU extra exists (D013).
+DEVICE = 'cpu'
+PRECISION = 'float64'
+# Design labels (D011, D013, PI ruling 1): the tuned design of the record; the untuned default
+# QRC (depth 3, pi, w = 2) or ESN preset; today's w = 1 circuit, reporting-only; an ablation
+# inheriting the design it was matched to.
+DESIGNS = ('tuned', 'default', 'default_w1', 'inherited')
 
 CSV_FIELDNAMES = [
     'run_id',
@@ -62,6 +73,12 @@ CSV_FIELDNAMES = [
     'measurement_model',
     'n_configs',
     'n_validation_evals',
+    'secondary_metrics',
+    'device',
+    'precision',
+    'design',
+    'sweep_id',
+    'tuning_record_sha',
 ]
 
 
@@ -103,7 +120,7 @@ def check_runs_csv_header(csv_path: Path) -> None:
 
 @dataclass
 class RunManifest:
-    """Schema v1.1 run manifest."""
+    """Schema 1.4 run manifest (one row of results/runs.csv)."""
 
     run_id: str
     timestamp_utc: str
@@ -130,6 +147,12 @@ class RunManifest:
     measurement_model: str = 'exact'
     n_configs: Optional[int] = None
     n_validation_evals: Optional[int] = None
+    secondary_metrics: Dict[str, float] = field(default_factory=dict)
+    device: str = DEVICE
+    precision: str = PRECISION
+    design: str = 'default'
+    sweep_id: str = ''
+    tuning_record_sha: str = ''
 
 
 def _git_commit_hash() -> str:
@@ -236,6 +259,10 @@ def create_manifest(
     measurement_model: str = 'exact',
     n_configs: Optional[int] = None,
     n_validation_evals: Optional[int] = None,
+    secondary_metrics: Optional[Dict[str, float]] = None,
+    design: str = 'default',
+    sweep_id: str = '',
+    tuning_record_sha: str = '',
 ) -> RunManifest:
     """Create a new run manifest record.
 
@@ -262,18 +289,28 @@ def create_manifest(
         n_validation_evals: Configuration x validation-block evaluations used to choose
             among them (0 when nothing was searched). The readout's own RidgeCV is the
             same for every model and is not counted.
+        secondary_metrics: Reported, never decided on: STM rows carry mc_total (k = 0..K)
+            and mc_k0 beside the primary stm_memory (D013).
+        design: One of DESIGNS: 'tuned' (deployed from the tuning record), 'default' (the
+            untuned default), 'default_w1' (today's w = 1 circuit, reporting-only) or
+            'inherited' (an ablation matched to a design).
+        sweep_id: The tuning record's sweep stamp; '' for a config without a tuning block.
+        tuning_record_sha: The tuning record's SHA-256; '' likewise.
 
     Returns:
-        RunManifest with all required schema v1.2 fields populated.
+        RunManifest with all schema 1.4 fields populated.
 
     Raises:
-        ValueError: If measurement_model is not a known measurement model.
+        ValueError: If measurement_model is not a known measurement model, or design is not
+            one of DESIGNS.
     """
     if measurement_model not in MEASUREMENT_LABELS:
         raise ValueError(
             f'Unknown measurement_model {measurement_model!r}; '
             f'expected one of {sorted(MEASUREMENT_LABELS)}'
         )
+    if design not in DESIGNS:
+        raise ValueError(f'Unknown design {design!r}; expected one of {DESIGNS}')
     py_info = sys.version_info
     python_version = f'{py_info.major}.{py_info.minor}.{py_info.micro}'
 
@@ -303,31 +340,15 @@ def create_manifest(
         measurement_model=measurement_model,
         n_configs=n_configs,
         n_validation_evals=n_validation_evals,
+        secondary_metrics=dict(secondary_metrics or {}),
+        design=design,
+        sweep_id=sweep_id,
+        tuning_record_sha=tuning_record_sha,
     )
 
 
-def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
-    """Append a manifest record to ``runs.csv``.
-
-    Atomicity note: this opens the target file in append mode and writes a
-    single row. CPython buffers and ``write()`` make the row write effectively
-    atomic on a single host for typical row sizes, but this function does
-    **not** provide cross-process file locking. Concurrent writers MUST
-    serialize externally; if interrupted mid-flush the row may be partial.
-
-    Args:
-        manifest: RunManifest to append.
-        csv_path: Path to runs.csv file.
-
-    Raises:
-        OSError: If file cannot be written.
-        RunsCsvSchemaError: If the file exists with a header that differs from
-            CSV_FIELDNAMES. Nothing is appended in that case.
-    """
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    check_runs_csv_header(csv_path)
-    write_header = not csv_path.exists() or csv_path.stat().st_size == 0
-
+def manifest_row(manifest: RunManifest) -> Dict[str, object]:
+    """The runs.csv row of a manifest, in CSV_FIELDNAMES order: the one row builder (D013)."""
     row = {
         'run_id': manifest.run_id,
         'timestamp_utc': manifest.timestamp_utc,
@@ -354,7 +375,40 @@ def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
         'measurement_model': manifest.measurement_model,
         'n_configs': manifest.n_configs,
         'n_validation_evals': manifest.n_validation_evals,
+        'secondary_metrics': json.dumps(manifest.secondary_metrics),
+        'device': manifest.device,
+        'precision': manifest.precision,
+        'design': manifest.design,
+        'sweep_id': manifest.sweep_id,
+        'tuning_record_sha': manifest.tuning_record_sha,
     }
+    assert list(row) == CSV_FIELDNAMES
+    return row
+
+
+def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
+    """Append a manifest record to ``runs.csv``.
+
+    Atomicity note: this opens the target file in append mode and writes a
+    single row. CPython buffers and ``write()`` make the row write effectively
+    atomic on a single host for typical row sizes, but this function does
+    **not** provide cross-process file locking. Concurrent writers MUST
+    serialize externally; if interrupted mid-flush the row may be partial.
+
+    Args:
+        manifest: RunManifest to append.
+        csv_path: Path to runs.csv file.
+
+    Raises:
+        OSError: If file cannot be written.
+        RunsCsvSchemaError: If the file exists with a header that differs from
+            CSV_FIELDNAMES. Nothing is appended in that case.
+    """
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    check_runs_csv_header(csv_path)
+    write_header = not csv_path.exists() or csv_path.stat().st_size == 0
+
+    row = manifest_row(manifest)
 
     with csv_path.open('a', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)

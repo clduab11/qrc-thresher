@@ -1,12 +1,18 @@
-"""Run command implementation."""
+"""Run command implementation (docs/DECISIONS.md D011, D012, D013).
+
+`qrc-thresher run TASK --config FILE` runs every seed pair of the config, serial or parallel,
+through the engine's shared ``run_pair``; there is no --seed. ``--design tuned`` (default)
+deploys the tuning record's design_TASK(pair) (or the config's own reservoir when the config has
+no tuning block); ``--design default`` deploys the untuned defaults; ``--design-task`` deploys
+another task's tuned design (G1(b) runs design_STM on parity, D014).
+"""
 
 from __future__ import annotations
 
 import logging
 import pickle
 from pathlib import Path
-from typing import Optional
-from uuid import uuid4
+from typing import List, Optional
 
 import numpy as np
 from sklearn.linear_model import RidgeCV
@@ -14,210 +20,57 @@ from sklearn.linear_model import RidgeCV
 logger = logging.getLogger('qrc_thresher')
 
 
-def run_handler(task: str, config_path: str, seed: Optional[int]) -> int:
-    """Handle run command. Returns exit code."""
+def run_handler(
+    task: str,
+    config_path: str,
+    design: str = 'tuned',
+    design_task: Optional[str] = None,
+) -> int:
+    """Handle the serial run command: every seed pair of the config. Returns exit code."""
     from qrc_thresher.config import load_config
     from qrc_thresher.db import ExperimentDB
-    from qrc_thresher.metrics.runtime import StageTimer
-    from qrc_thresher.proof.run_manifest import (
-        RunsCsvSchemaError,
-        create_manifest,
-        update_cumulative_compute,
-    )
+    from qrc_thresher.engine import run_pair
+    from qrc_thresher.proof.run_manifest import RunsCsvSchemaError, update_cumulative_compute
+    from qrc_thresher.tuning import seed_pairs
 
     cfg_path = Path(config_path)
     cfg = load_config(cfg_path)
 
-    task_seed = seed if seed is not None else cfg.seeds.task_seed
-    reservoir_seed = cfg.seeds.reservoir_seed
+    def log_artifacts(X: np.ndarray, model) -> List[str]:
+        if not cfg.proof.log_artifacts:
+            return []
+        from uuid import uuid4
 
-    timer = StageTimer()
-    circuit_hash = 'n/a'
-    artifact_paths: list[str] = []
-    success = False
-    failure_reason = None
-    primary_metric_name = ''
-    primary_metric_value: Optional[float] = None
+        run_id = str(uuid4())
+        paths = [p for p in (_save_features(X, run_id), _save_model(model, run_id)) if p]
+        return paths
 
-    run_id = str(uuid4())
-
-    try:
-        rng_task = np.random.default_rng(task_seed)
-
-        if task == 'stm':
-            from qrc_thresher.metrics.scoring import memory_capacity
-            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
-            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
-            from qrc_thresher.tasks.stm import generate_stm
-
-            with timer.stage('task_generation'):
-                ds = generate_stm(
-                    length=cfg.task.length,
-                    delay_max=cfg.task.delay_max or 20,
-                    train_frac=cfg.task.train_frac,
-                    rng=rng_task,
+    all_ok = True
+    for task_seed, reservoir_seed in seed_pairs(cfg):
+        manifests = run_pair(
+            cfg, task, task_seed, reservoir_seed, cfg_path, design=design,
+            design_task=design_task, log_artifacts=log_artifacts,
+        )
+        for manifest in manifests:
+            if manifest.success:
+                print(
+                    f'{task} seeds {task_seed}/{reservoir_seed} [{manifest.design}] '
+                    f'{manifest.primary_metric_name}: {manifest.primary_metric_value:.4f}'
                 )
-
-            with timer.stage('reservoir_build'):
-                reservoir = reservoir_from_config(cfg, reservoir_seed)
-                circuit_hash = reservoir.circuit_hash
-
-            with timer.stage('feature_extraction'):
-                X = reservoir.features(ds.u)
-
-            if cfg.proof.log_artifacts:
-                features_path = _save_features(X, run_id)
-                if features_path:
-                    artifact_paths.append(features_path)
-
-            with timer.stage('readout_training'):
-                model = train_readout(
-                    X[: ds.train_end],
-                    ds.targets[: ds.train_end],
-                    cfg.training.ridge_alphas,
-                    cfg.training.cv_folds,
-                )
-
-            if cfg.proof.log_artifacts:
-                model_path = _save_model(model, run_id)
-                if model_path:
-                    artifact_paths.append(model_path)
-
-            with timer.stage('evaluation'):
-                y_pred = model.predict(X[ds.train_end :])
-                mc = memory_capacity(y_pred, ds.targets[ds.train_end :])
-                primary_metric_name = 'mc'
-                primary_metric_value = float(mc)
-                print(f'STM Memory Capacity: {mc:.4f}')
-
-        elif task == 'parity':
-            from qrc_thresher.metrics.scoring import classification_accuracy
-            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
-            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
-            from qrc_thresher.tasks.temporal_parity import generate_parity
-
-            window = cfg.task.parity_window or 3
-            with timer.stage('task_generation'):
-                ds = generate_parity(
-                    length=cfg.task.length,
-                    window=window,
-                    train_frac=cfg.task.train_frac,
-                    rng=rng_task,
-                )
-            with timer.stage('reservoir_build'):
-                reservoir = reservoir_from_config(cfg, reservoir_seed)
-                circuit_hash = reservoir.circuit_hash
-            with timer.stage('feature_extraction'):
-                X = reservoir.features(ds.u.astype(np.float64))
-
-            if cfg.proof.log_artifacts:
-                features_path = _save_features(X, run_id)
-                if features_path:
-                    artifact_paths.append(features_path)
-
-            with timer.stage('readout_training'):
-                model = train_readout(
-                    X[: ds.train_end],
-                    ds.targets[: ds.train_end].astype(np.float64),
-                    cfg.training.ridge_alphas,
-                    cfg.training.cv_folds,
-                )
-
-            if cfg.proof.log_artifacts:
-                model_path = _save_model(model, run_id)
-                if model_path:
-                    artifact_paths.append(model_path)
-
-            with timer.stage('evaluation'):
-                y_pred = model.predict(X[ds.train_end :])
-                acc = classification_accuracy(y_pred, ds.targets[ds.train_end :])
-                primary_metric_name = 'accuracy'
-                primary_metric_value = float(acc)
-                print(f'Parity accuracy (window={window}): {acc:.4f}')
-
-        else:  # narma
-            from qrc_thresher.metrics.scoring import nrmse
-            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
-            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
-            from qrc_thresher.tasks.narma10 import generate_narma10
-
-            with timer.stage('task_generation'):
-                ds = generate_narma10(
-                    length=cfg.task.length,
-                    train_frac=cfg.task.train_frac,
-                    rng=rng_task,
-                )
-            with timer.stage('reservoir_build'):
-                reservoir = reservoir_from_config(cfg, reservoir_seed)
-                circuit_hash = reservoir.circuit_hash
-            with timer.stage('feature_extraction'):
-                X = reservoir.features(ds.u)
-
-            if cfg.proof.log_artifacts:
-                features_path = _save_features(X, run_id)
-                if features_path:
-                    artifact_paths.append(features_path)
-
-            with timer.stage('readout_training'):
-                model = train_readout(
-                    X[: ds.train_end],
-                    ds.targets[: ds.train_end],
-                    cfg.training.ridge_alphas,
-                    cfg.training.cv_folds,
-                )
-
-            if cfg.proof.log_artifacts:
-                model_path = _save_model(model, run_id)
-                if model_path:
-                    artifact_paths.append(model_path)
-
-            with timer.stage('evaluation'):
-                y_pred = model.predict(X[ds.train_end :])
-                err = nrmse(y_pred, ds.targets[ds.train_end :])
-                primary_metric_name = 'nrmse'
-                primary_metric_value = float(err)
-                print(f'NARMA-10 NRMSE: {err:.4f}')
-
-        success = True
-
-    except Exception as exc:
-        failure_reason = str(exc)
-        logger.error('Run failed: %s', exc)
-        success = False
-
-    timing = timer.to_dict()
-    manifest = create_manifest(
-        config_path=cfg_path,
-        circuit_hash=circuit_hash,
-        task_seed=task_seed,
-        reservoir_seed=reservoir_seed,
-        backend_device=cfg.reservoir.backend,
-        runtime_per_stage_seconds=timing,
-        entanglement_metric=None,
-        success=success,
-        failure_reason=failure_reason,
-        artifact_paths=artifact_paths,
-        task_name=task,
-        primary_metric_name=primary_metric_name,
-        primary_metric_value=primary_metric_value,
-        measurement_model=cfg.measurement.model,
-        n_configs=1,
-        n_validation_evals=0,
-    )
-    manifest.run_id = run_id
-
-    try:
-        db = ExperimentDB()
-        db.insert(manifest)
-        db.close()
-    except RunsCsvSchemaError:
-        raise
-    except Exception as exc:
-        logger.warning('Failed to insert into ExperimentDB: %s', exc)
-    total_seconds = sum(timing.values())
-    update_cumulative_compute(total_seconds)
-
-    return 1 if not success else 0
+            else:
+                all_ok = False
+                print(f'{task} seeds {task_seed}/{reservoir_seed} FAILED: '
+                      f'{manifest.failure_reason}')
+            try:
+                db = ExperimentDB()
+                db.insert(manifest)
+                db.close()
+            except RunsCsvSchemaError:
+                raise
+            except Exception as exc:
+                logger.warning('Failed to insert into ExperimentDB: %s', exc)
+            update_cumulative_compute(sum(manifest.runtime_per_stage_seconds.values()))
+    return 0 if all_ok else 1
 
 
 def _save_features(X: np.ndarray, run_id: str) -> Optional[str]:
@@ -268,8 +121,9 @@ def _save_model(model: RidgeCV, run_id: str) -> Optional[str]:
 def run_parallel_handler(
     task: str,
     config_path: str,
-    seed: Optional[int],
     workers: int,
+    design: str = 'tuned',
+    design_task: Optional[str] = None,
 ) -> int:
     """Handle parallel run command. Returns exit code."""
     from qrc_thresher.config import load_config
@@ -278,14 +132,11 @@ def run_parallel_handler(
     cfg_path = Path(config_path)
     cfg = load_config(cfg_path)
 
-    if seed is not None:
-        cfg.seeds.task_seed = seed
-
-    if cfg.task.name != task:
-        cfg.task.name = task
-
     runner = ParallelRunner(config=cfg, max_workers=workers)
-    manifests = runner.run_seeds(task_name=task, n_seeds=cfg.seeds.n_seeds, config_path=cfg_path)
+    manifests = runner.run_seeds(
+        task_name=task, n_seeds=cfg.seeds.n_seeds, config_path=cfg_path, design=design,
+        design_task=design_task,
+    )
 
     n_total = len(manifests)
     n_success = sum(1 for m in manifests if m.success)

@@ -1,7 +1,9 @@
 """Parallel execution engine for qrc-thresher.
 
-Uses ProcessPoolExecutor to run multiple benchmark seeds in parallel.
-Results are collected and written to runs.csv atomically with file locking.
+Uses ProcessPoolExecutor to run multiple benchmark seeds in parallel; the serial path shares
+``run_pair`` with the run command. Results are written to runs.csv with file locking. Every
+deployment follows docs/DECISIONS.md D011 (tuned designs from the tuning record, or the untuned
+defaults), D012 (the washout) and D013 (schema 1.4 rows).
 """
 
 from __future__ import annotations
@@ -10,8 +12,6 @@ import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-import numpy as np
 
 try:
     import filelock
@@ -36,14 +36,16 @@ _RUNS_CSV = Path('results') / 'runs.csv'
 _RUNS_LOCK = _RUNS_CSV.with_suffix('.csv.lock')
 
 
-def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
-    """Run a single seed and return manifest.
+def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> List[RunManifest]:
+    """Run one seed pair and return its manifests (one per deployment; D011).
 
     Args:
-        args: Tuple of (seed_index, task_name, config_dict)
+        args: Tuple of (seed_index, task_name, config_dict). The config dict may carry
+            ``_config_path``, ``_design`` ('tuned' | 'default') and ``_design_task``.
 
     Returns:
-        RunManifest for this seed's run
+        One RunManifest per deployment: one for a tuned (or config-fixed) design, two for the
+        untuned defaults (design 'default' at w = 2 and 'default_w1' at w = 1).
     """
     seed_index, task_name, config_dict = args
 
@@ -57,152 +59,131 @@ def _run_single_seed(args: Tuple[int, str, Dict[str, Any]]) -> RunManifest:
     config_dict['seeds']['task_seed'] = task_seed
     config_dict['seeds']['reservoir_seed'] = reservoir_seed
     config_dict['seeds']['n_seeds'] = 1
+    cfg_path = Path(config_dict.pop('_config_path', 'unknown'))
+    design = config_dict.pop('_design', 'tuned')
+    design_task = config_dict.pop('_design_task', None)
 
     config = AlphaLiteConfig.model_validate(config_dict)
+    return run_pair(config, task_name, task_seed, reservoir_seed, cfg_path,
+                    design=design, design_task=design_task)
 
-    cfg_path_str = config_dict.get('_config_path', 'unknown')
-    cfg_path = Path(cfg_path_str)
 
-    rng_task = np.random.default_rng(task_seed)
+def run_pair(
+    config: AlphaLiteConfig,
+    task_name: str,
+    task_seed: int,
+    reservoir_seed: int,
+    cfg_path: Path,
+    *,
+    design: str = 'tuned',
+    design_task: Optional[str] = None,
+    log_artifacts: Optional[Any] = None,
+) -> List[RunManifest]:
+    """Run every QRC deployment of one seed pair on one task and return the manifests.
+
+    The shared path of the engine and the run command (D012, D013): the task data, the
+    deployments of ``deploy.qrc_deployments``, the harness readout on [washout, train_end),
+    the task's metric on the test rows. ``log_artifacts(X, model, run_id) -> list[str]`` may
+    save per-run artifacts and return their paths.
+    """
+    from qrc_thresher.deploy import fit_and_score, qrc_deployments
+    from qrc_thresher.task_names import qrc_task_name
+    from qrc_thresher.tuning import task_data
 
     timer = StageTimer()
-    circuit_hash = 'n/a'
-    artifact_paths: List[str] = []
-    success = False
-    failure_reason: Optional[str] = None
-    primary_metric_name = ''
-    primary_metric_value: Optional[float] = None
-    entanglement_metric: Optional[float] = None
-
+    manifests: List[RunManifest] = []
     try:
-        if task_name == 'stm':
-            from qrc_thresher.metrics.scoring import memory_capacity
-            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
-            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
-            from qrc_thresher.tasks.stm import generate_stm
-
-            with timer.stage('task_generation'):
-                ds = generate_stm(
-                    length=config.task.length,
-                    delay_max=config.task.delay_max or 20,
-                    train_frac=config.task.train_frac,
-                    rng=rng_task,
-                )
-
-            with timer.stage('reservoir_build'):
-                reservoir = reservoir_from_config(config, reservoir_seed)
-                circuit_hash = reservoir.circuit_hash
-
-            with timer.stage('feature_extraction'):
-                X = reservoir.features(ds.u)
-
-            with timer.stage('readout_training'):
-                model = train_readout(
-                    X[: ds.train_end],
-                    ds.targets[: ds.train_end],
-                    config.training.ridge_alphas,
-                    config.training.cv_folds,
-                )
-
-            with timer.stage('evaluation'):
-                y_pred = model.predict(X[ds.train_end :])
-                mc = memory_capacity(y_pred, ds.targets[ds.train_end :])
-                primary_metric_name = 'mc'
-                primary_metric_value = float(mc)
-
-        elif task_name == 'parity':
-            from qrc_thresher.metrics.scoring import classification_accuracy
-            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
-            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
-            from qrc_thresher.tasks.temporal_parity import generate_parity
-
-            window = config.task.parity_window or 3
-            with timer.stage('task_generation'):
-                ds = generate_parity(
-                    length=config.task.length,
-                    window=window,
-                    train_frac=config.task.train_frac,
-                    rng=rng_task,
-                )
-            with timer.stage('reservoir_build'):
-                reservoir = reservoir_from_config(config, reservoir_seed)
-                circuit_hash = reservoir.circuit_hash
-            with timer.stage('feature_extraction'):
-                X = reservoir.features(ds.u.astype(np.float64))
-            with timer.stage('readout_training'):
-                model = train_readout(
-                    X[: ds.train_end],
-                    ds.targets[: ds.train_end].astype(np.float64),
-                    config.training.ridge_alphas,
-                    config.training.cv_folds,
-                )
-            with timer.stage('evaluation'):
-                y_pred = model.predict(X[ds.train_end :])
-                acc = classification_accuracy(y_pred, ds.targets[ds.train_end :])
-                primary_metric_name = 'accuracy'
-                primary_metric_value = float(acc)
-
-        elif task_name == 'narma':
-            from qrc_thresher.metrics.scoring import nrmse
-            from qrc_thresher.reservoirs.pennylane_qrc import train_readout
-            from qrc_thresher.reservoirs.windowed_qrc import reservoir_from_config
-            from qrc_thresher.tasks.narma10 import generate_narma10
-
-            with timer.stage('task_generation'):
-                ds = generate_narma10(
-                    length=config.task.length,
-                    train_frac=config.task.train_frac,
-                    rng=rng_task,
-                )
-            with timer.stage('reservoir_build'):
-                reservoir = reservoir_from_config(config, reservoir_seed)
-                circuit_hash = reservoir.circuit_hash
-            with timer.stage('feature_extraction'):
-                X = reservoir.features(ds.u)
-            with timer.stage('readout_training'):
-                model = train_readout(
-                    X[: ds.train_end],
-                    ds.targets[: ds.train_end],
-                    config.training.ridge_alphas,
-                    config.training.cv_folds,
-                )
-            with timer.stage('evaluation'):
-                y_pred = model.predict(X[ds.train_end :])
-                err = nrmse(y_pred, ds.targets[ds.train_end :])
-                primary_metric_name = 'nrmse'
-                primary_metric_value = float(err)
-
-        else:
-            raise ValueError(f'Unknown task: {task_name}')
-
-        success = True
-
+        with timer.stage('task_generation'):
+            ds = task_data(config, task_name, task_seed)
+        with timer.stage('reservoir_build'):
+            deployments = qrc_deployments(
+                config, task_name, reservoir_seed, task_seed, cfg_path,
+                design=design, design_task=design_task,
+            )
     except Exception as exc:
-        failure_reason = str(exc)
-        logger.error('Seed %d failed: %s', seed_index, exc)
-        success = False
+        logger.error('Seed pair %d/%d failed: %s', task_seed, reservoir_seed, exc)
+        manifests.append(_manifest(
+            config, cfg_path, task_name, task_seed, reservoir_seed, timer.to_dict(),
+            circuit_hash='n/a', success=False, failure_reason=str(exc), design='default',
+        ))
+        return manifests
 
-    timing = timer.to_dict()
-    manifest = create_manifest(
+    for dep in deployments:
+        dep_timer = StageTimer()
+        artifact_paths: List[str] = []
+        success, failure_reason = False, None
+        metric_name, value, secondary = '', None, {}
+        try:
+            with dep_timer.stage('feature_extraction'):
+                X = dep.features(ds.u)
+            with dep_timer.stage('readout_training'):
+                metric_name, value, secondary, model, _ = fit_and_score(X, ds, task_name, config)
+            if log_artifacts is not None:
+                artifact_paths = list(log_artifacts(X, model) or [])
+            success = True
+        except Exception as exc:
+            failure_reason = str(exc)
+            logger.error('Seed pair %d/%d (%s) failed: %s', task_seed, reservoir_seed,
+                         dep.design, exc)
+        timing = {**timer.to_dict(), **dep_timer.to_dict()}
+        manifests.append(_manifest(
+            config, cfg_path, task_name, task_seed, reservoir_seed, timing,
+            circuit_hash=dep.circuit_hash, success=success, failure_reason=failure_reason,
+            design=dep.design, artifact_paths=artifact_paths,
+            primary_metric_name=metric_name if success else '',
+            primary_metric_value=value if success else None,
+            secondary_metrics=secondary if success else {},
+            n_configs=dep.n_configs, n_validation_evals=dep.n_validation_evals,
+            sweep_id=dep.sweep_id, tuning_record_sha=dep.tuning_record_sha,
+            task_label=qrc_task_name(task_name),
+        ))
+    return manifests
+
+
+def _manifest(
+    config: AlphaLiteConfig,
+    cfg_path: Path,
+    task_name: str,
+    task_seed: int,
+    reservoir_seed: int,
+    timing: Dict[str, float],
+    *,
+    circuit_hash: str,
+    success: bool,
+    failure_reason: Optional[str],
+    design: str,
+    artifact_paths: Optional[List[str]] = None,
+    primary_metric_name: str = '',
+    primary_metric_value: Optional[float] = None,
+    secondary_metrics: Optional[Dict[str, float]] = None,
+    n_configs: int = 1,
+    n_validation_evals: int = 0,
+    sweep_id: str = '',
+    tuning_record_sha: str = '',
+    task_label: Optional[str] = None,
+) -> RunManifest:
+    return create_manifest(
         config_path=cfg_path,
         circuit_hash=circuit_hash,
         task_seed=task_seed,
         reservoir_seed=reservoir_seed,
         backend_device=config.reservoir.backend,
         runtime_per_stage_seconds=timing,
-        entanglement_metric=entanglement_metric,
+        entanglement_metric=None,
         success=success,
         failure_reason=failure_reason,
-        artifact_paths=artifact_paths,
-        task_name=task_name,
+        artifact_paths=list(artifact_paths or []),
+        task_name=task_label or task_name,
         primary_metric_name=primary_metric_name,
         primary_metric_value=primary_metric_value,
         measurement_model=config.measurement.model,
-        n_configs=1,
-        n_validation_evals=0,
+        n_configs=n_configs,
+        n_validation_evals=n_validation_evals,
+        secondary_metrics=secondary_metrics or {},
+        design=design,
+        sweep_id=sweep_id,
+        tuning_record_sha=tuning_record_sha,
     )
-
-    return manifest
 
 
 class ParallelRunner:
@@ -231,25 +212,28 @@ class ParallelRunner:
         task_name: str,
         n_seeds: Optional[int] = None,
         config_path: Optional[Path] = None,
+        design: str = 'tuned',
+        design_task: Optional[str] = None,
     ) -> List[RunManifest]:
         """Run benchmark for multiple seeds in parallel.
 
         Args:
             task_name: Task to run ('stm', 'parity', 'narma')
             n_seeds: Number of seeds to run (default from config)
-            config_path: Path to config file (for manifest records)
+            config_path: Path to config file (for manifest records and the tuning record)
+            design: 'tuned' (the tuning record's design) or 'default' (D011)
+            design_task: Task whose tuned design is deployed (default: task_name)
 
         Returns:
-            List of RunManifest objects
+            List of RunManifest objects (one per deployment and seed pair)
         """
         if n_seeds is None:
             n_seeds = self.config.seeds.n_seeds
 
         config_dict = self.config.model_dump()
-        if config_path is None:
-            config_dict['_config_path'] = 'unknown'
-        else:
-            config_dict['_config_path'] = str(config_path)
+        config_dict['_config_path'] = 'unknown' if config_path is None else str(config_path)
+        config_dict['_design'] = design
+        config_dict['_design_task'] = design_task
 
         work_items = [
             (seed_idx, task_name, config_dict)
@@ -260,9 +244,9 @@ class ParallelRunner:
 
         if self.max_workers == 1:
             for item in work_items:
-                manifest = _run_single_seed(item)
-                manifests.append(manifest)
-                self._write_manifest_safe(manifest, filelock)
+                for manifest in _run_single_seed(item):
+                    manifests.append(manifest)
+                    self._write_manifest_safe(manifest, filelock)
         else:
             with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
@@ -291,9 +275,9 @@ class ParallelRunner:
 
                 for future in futures_iter:
                     try:
-                        manifest = future.result()
-                        manifests.append(manifest)
-                        self._write_manifest_safe(manifest, filelock)
+                        for manifest in future.result():
+                            manifests.append(manifest)
+                            self._write_manifest_safe(manifest, filelock)
                     except Exception as exc:
                         logger.error('Worker future failed: %s', exc)
 

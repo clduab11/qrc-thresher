@@ -16,6 +16,7 @@ from qrc_thresher.proof.run_manifest import (
     RunManifest,
     RunsCsvSchemaError,
     check_runs_csv_header,
+    manifest_row,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,34 +149,12 @@ class ExperimentDB:
         logger.info("Inserted run %s into ExperimentDB", manifest.run_id)
 
     def _manifest_to_json(self, manifest: RunManifest) -> str:
-        """Serialize manifest to JSON string."""
-        return json.dumps({
-            'run_id': manifest.run_id,
-            'timestamp_utc': manifest.timestamp_utc,
-            'git_commit_hash': manifest.git_commit_hash,
-            'git_branch': manifest.git_branch,
-            'config_path': manifest.config_path,
-            'config_hash': manifest.config_hash,
-            'circuit_hash': manifest.circuit_hash,
-            'task_seed': manifest.task_seed,
-            'reservoir_seed': manifest.reservoir_seed,
-            'python_version': manifest.python_version,
-            'package_versions': manifest.package_versions,
-            'backend_device': manifest.backend_device,
-            'runtime_per_stage_seconds': manifest.runtime_per_stage_seconds,
-            'entanglement_metric': manifest.entanglement_metric,
-            'success': manifest.success,
-            'failure_reason': manifest.failure_reason,
-            'artifact_paths': manifest.artifact_paths,
-            'platform': manifest.platform,
-            'cli_command': manifest.cli_command,
-            'task_name': manifest.task_name,
-            'primary_metric_name': manifest.primary_metric_name,
-            'primary_metric_value': manifest.primary_metric_value,
-            'measurement_model': manifest.measurement_model,
-            'n_configs': manifest.n_configs,
-            'n_validation_evals': manifest.n_validation_evals,
-        })
+        """Serialize the manifest (every schema field, through the shared row builder)."""
+        row = manifest_row(manifest)
+        for key in ('runtime_per_stage_seconds', 'artifact_paths', 'package_versions',
+                    'secondary_metrics'):
+            row[key] = getattr(manifest, key)
+        return json.dumps(row)
 
     def _append_to_csv(self, manifest: RunManifest) -> None:
         """Append manifest to legacy CSV with file locking."""
@@ -192,38 +171,10 @@ class ExperimentDB:
             logger.warning("Failed to write CSV row: %s", exc)
 
     def _write_csv_row(self, manifest: RunManifest, csv_path: Path) -> None:
-        """Write a single row to CSV (refusing a mismatched header)."""
+        """Write a single row to CSV (refusing a mismatched header), through manifest_row."""
         check_runs_csv_header(csv_path)
         write_header = not csv_path.exists() or csv_path.stat().st_size == 0
-
-        row = {
-            'run_id': manifest.run_id,
-            'timestamp_utc': manifest.timestamp_utc,
-            'git_commit_hash': manifest.git_commit_hash,
-            'git_branch': manifest.git_branch,
-            'config_path': manifest.config_path,
-            'config_hash': manifest.config_hash,
-            'circuit_hash': manifest.circuit_hash,
-            'task_seed': manifest.task_seed,
-            'reservoir_seed': manifest.reservoir_seed,
-            'python_version': manifest.python_version,
-            'backend_device': manifest.backend_device,
-            'runtime_per_stage_seconds': json.dumps(manifest.runtime_per_stage_seconds),
-            'entanglement_metric': manifest.entanglement_metric,
-            'success': manifest.success,
-            'failure_reason': manifest.failure_reason,
-            'artifact_paths': json.dumps(manifest.artifact_paths),
-            'package_versions': json.dumps(manifest.package_versions),
-            'platform': manifest.platform,
-            'cli_command': manifest.cli_command,
-            'task_name': manifest.task_name,
-            'primary_metric_name': manifest.primary_metric_name,
-            'primary_metric_value': manifest.primary_metric_value,
-            'measurement_model': manifest.measurement_model,
-            'n_configs': manifest.n_configs,
-            'n_validation_evals': manifest.n_validation_evals,
-        }
-
+        row = manifest_row(manifest)
         with csv_path.open('a', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=_CSV_FIELDNAMES)
             if write_header:
