@@ -1,0 +1,107 @@
+# Comparative family: pre-registration, version 1 (docs/DECISIONS.md D013, D014).
+#
+# Committed on its own, before any comparative run. Never edit this file. A changed protocol is
+# a new version file (COMPARATIVE.v2.yaml) with its own DECISIONS entry.
+# tests/test_comparative_family.py pins a hash of this file's parsed content.
+
+family: COMPARATIVE
+version: 1
+decision_records: [D011, D012, D013, D014]
+
+experiment_config: configs/comparative.yaml   # seeds, readout, washout, the three tuning grids
+tuning_grids: by_reference                     # the grids are the config's tuning block (D011)
+
+measurement:
+  model: exact
+  label: exact (oracle upper bound)
+
+pairing:
+  keys: [config_hash, sweep_id, design, task_seed, reservoir_seed]
+  min_pairs: 12
+  budget_equality: [n_configs, n_validation_evals]   # between two tuned arms, pair by pair
+  inherited_match: design_hash_plus_ablation_suffix  # tuned arm vs its inherited ablation (D010)
+  duplicate_rule: exact_rerun_collapses              # same circuit_hash and value; else refused
+  washout: 50
+
+statistics:
+  decision: paired_t_one_sided
+  alpha: 0.05
+  correction: holm
+  family_size: 5
+  # The exact set of p-values entering holm_bonferroni (PI ruling 9): one per member, the
+  # one-sided paired-t p of its registered comparison; an INSUFFICIENT member enters as 1.0.
+  holm_family: [G1.paired_t_one_sided, G2.paired_t_one_sided, G2.5.paired_t_one_sided,
+                G3.paired_t_one_sided, G4.paired_t_one_sided]
+  insufficient_member_p: 1.0
+  reported: [wilcoxon_signed_rank, bca_ci_95, d_z, mean_diff, n_pairs]
+  wilcoxon:
+    zero_method: wilcox
+    method: exact_without_ties   # approx otherwise; effective n reported
+  bootstrap:
+    method: bca
+    n_resamples: 2000
+    rng_seed: 20260923
+    ci_level: 0.95
+  d_z: mean_over_sd_ddof1_null_at_zero_sd
+  power:
+    n_pairs: 12
+    detectable_d_z_at_80pct_power_one_sided: 0.77   # noncentral t, alpha 0.05 (D013)
+
+members:
+  G1:
+    clause_a: g07_v1_pass_on_tuned_design   # design_STM on alpha_lite.yaml's 3 pairs
+    design: stm
+    task: parity
+    metric: accuracy
+    baseline: ablation:no_entangle          # inherited from design_STM
+    direction: greater
+    readout: z_only
+    floor: null
+    reported_beside: stm_memory_margin_over_no_entangle
+  G2:
+    design: parity
+    task: parity
+    metric: accuracy
+    baseline: rks_parity                    # tuned RKS (D011 grid)
+    direction: greater
+    floor: {metric: accuracy, rule: mean_greater_than, value: 0.70}
+  G2.5:
+    design: stm
+    task: stm
+    metric: stm_memory
+    baseline: ablation:haar                 # inherited from design_STM
+    direction: greater
+    readout: z_only
+    floor: null
+  G3:
+    design: stm
+    task: stm
+    metric: stm_memory
+    baseline: esn                           # tuned ESN (D011 grid, with bias)
+    direction: greater
+    floor: null
+    reported_beside: mc_k0
+  G4:
+    design: narma
+    task: narma
+    metric: nrmse
+    baseline: esn_narma                     # tuned ESN
+    direction: less
+    floor: {metric: nrmse, rule: mean_less_than, value: 0.60}
+
+defaults:
+  # Reported beside every member with identical statistics, never gated, and never able to flip
+  # a verdict: the tuned design is the verdict-bearing design (D014, PI rulings 1 and 5).
+  compared_qrc: {design: default, depth: 3, encoding_scale: 3.141592653589793, window: 2}
+  reported_qrc: {design: default_w1, depth: 3, encoding_scale: 3.141592653589793, window: 1}
+  esn: {design: default, preset: esn_nonlinear}
+  one_candidate_row_per_pair: true   # two candidate QRC rows for a pair -> INSUFFICIENT_EVIDENCE
+  comparators:
+    # G1, G2.5: the matched ablation of the same (default) design; G3, G4: the ESN of the same
+    # design (contests: budgets match); G2: the tuned RKS in both tables (a task-triviality
+    # floor: the strongest RKS is the honest comparator).
+    G1: ablation:no_entangle
+    G2: rks_parity
+    G2.5: ablation:haar
+    G3: esn
+    G4: esn_narma
