@@ -14,7 +14,7 @@ chosen after the data are in, and nobody else can rerun the experiment. This pro
 method before it looks at the answer: the pass/fail rules are written down and locked before the
 experiment runs, every classical baseline gets exactly the same tuning budget as the quantum
 model, the control experiments are designed so a spurious result retracts itself, and every
-number carries a manifest that lets anyone reproduce it bit for bit. A negative result is a
+number carries a manifest that lets anyone reproduce it to every recorded digit. A negative result is a
 valid, publishable outcome here. No quantum advantage is claimed — the point is to find out, and
 to be unable to fool ourselves along the way.
 
@@ -45,7 +45,8 @@ qrc-thresher tests it under rules that make the usual escape hatches unavailable
   quietly smaller.
 - **Reproducibility that has been checked.** Every result row records the commit, the config hash,
   the circuit hash, the seeds and the environment. The same locked dependencies reproduced the
-  same gate statistics to every printed digit on Windows and on Linux.
+  same gate statistics to every recorded digit on Windows and on Linux, and two independent runs
+  of the registered sweep agreed row for row.
 
 The tasks are synthetic and standard — short-term memory, temporal parity (XOR over a window) and
 NARMA-10 — on 4-qubit simulated circuits against a 4-unit echo state network and 4-feature random
