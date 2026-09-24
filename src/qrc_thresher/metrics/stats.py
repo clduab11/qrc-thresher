@@ -1,10 +1,15 @@
-"""Statistical analysis: paired tests, corrections, and uncertainty metrics."""
+"""Statistical analysis: paired tests, corrections, and uncertainty metrics.
+
+The comparative gates use ``metrics.paired`` (docs/DECISIONS.md D013), which builds on the
+functions here: ``bca_ci`` for the bootstrap interval, ``holm_bonferroni`` for the family
+adjustment (unchanged since D001) and ``power_analysis`` / ``achieved_power`` for the run count.
+"""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 from numpy.random import Generator
@@ -14,31 +19,36 @@ logger = logging.getLogger(__name__)
 
 _BOOTSTRAP_N_RESAMPLES = 1000
 _CI_LEVEL = 0.95
+SIDED = (1, 2)
 
 
 @dataclass(frozen=True, slots=True)
 class PairedTestResult:
-    """Result of a paired statistical test."""
+    """Result of a paired t-test.
+
+    ``d_z`` is mean(diff) / sd(diff) with sd over n - 1, and None when sd = 0 (D013; it was
+    named ``cohens_d`` and written as 0.0 before, defect D20).
+    """
 
     mean_diff: float
     std_diff: float
     t_statistic: float
     p_value: float
-    cohens_d: float
+    d_z: Optional[float]
 
 
 def paired_test(
     scores_a: np.ndarray,
     scores_b: np.ndarray,
 ) -> PairedTestResult:
-    """Perform paired t-test and compute Cohen's d.
+    """Perform a two-sided paired t-test and compute d_z.
 
     Args:
         scores_a: Scores from condition A (e.g., QRC), shape (n,).
         scores_b: Scores from condition B (e.g., ESN), shape (n,).
 
     Returns:
-        PairedTestResult with t-stat, p-value, Cohen's d.
+        PairedTestResult with t-stat, p-value, d_z (None at zero variance).
 
     Raises:
         ValueError: If arrays have different lengths or length < 2.
@@ -50,37 +60,39 @@ def paired_test(
     if len(scores_a) < 2:
         raise ValueError('Need at least 2 observations for paired test')
 
-    diff = scores_a - scores_b
+    diff = np.asarray(scores_a, dtype=np.float64) - np.asarray(scores_b, dtype=np.float64)
     t_stat, p_val = stats.ttest_rel(scores_a, scores_b)
     mean_d = float(np.mean(diff))
     std_d = float(np.std(diff, ddof=1))
-    cohens_d = mean_d / std_d if std_d > 0 else 0.0
+    d_z = d_z_effect(diff)
 
     result = PairedTestResult(
         mean_diff=mean_d,
         std_diff=std_d,
         t_statistic=float(t_stat),
         p_value=float(p_val),
-        cohens_d=cohens_d,
+        d_z=d_z,
     )
-    logger.debug(
-        'Paired t-test: mean_diff=%.4f, p=%.4f, d=%.4f',
-        mean_d,
-        p_val,
-        cohens_d,
-    )
+    logger.debug('Paired t-test: mean_diff=%.4f, p=%.4f, d_z=%s', mean_d, p_val, d_z)
     return result
+
+
+def d_z_effect(diff: np.ndarray) -> Optional[float]:
+    """d_z = mean(diff) / sd(diff) (sd over n - 1); None when sd = 0 (D013)."""
+    diff = np.asarray(diff, dtype=np.float64)
+    sd = float(np.std(diff, ddof=1)) if len(diff) > 1 else 0.0
+    if sd == 0.0:
+        return None
+    return float(np.mean(diff) / sd)
 
 
 def wilcoxon_test(
     scores_a: np.ndarray,
     scores_b: np.ndarray,
 ) -> Tuple[float, float]:
-    """Perform Wilcoxon signed-rank test.
+    """Perform a two-sided Wilcoxon signed-rank test.
 
-    Args:
-        scores_a: Scores from condition A, shape (n,).
-        scores_b: Scores from condition B, shape (n,).
+    The comparative gates use the one-sided form in ``metrics.paired`` (D013).
 
     Returns:
         Tuple of (statistic, p_value).
@@ -96,7 +108,7 @@ def bootstrap_ci(
     n_resamples: int = _BOOTSTRAP_N_RESAMPLES,
     ci_level: float = _CI_LEVEL,
 ) -> Tuple[float, float]:
-    """Compute bootstrap confidence interval for mean.
+    """Compute a percentile bootstrap confidence interval for the mean.
 
     Args:
         scores: Observed scores, shape (n,).
@@ -207,23 +219,61 @@ def bca_ci(
     return lower, upper
 
 
-def power_analysis(
-    effect_size: float,
-    alpha: float = 0.05,
-    power: float = 0.8,
-) -> int:
-    """Estimate required paired-sample size using normal approximation.
-
-    effect_size corresponds to Cohen's d for paired differences.
-    """
+def _check_power_args(effect_size: float, alpha: float, sided: int) -> None:
     if effect_size <= 0:
         raise ValueError(f'effect_size must be > 0, got {effect_size}')
     if not 0 < alpha < 1:
         raise ValueError(f'alpha must be in (0,1), got {alpha}')
+    if sided not in SIDED:
+        raise ValueError(f'sided must be 1 or 2, got {sided!r}')
+
+
+def achieved_power(n_pairs: int, effect_size: float, alpha: float = 0.05, *, sided: int) -> float:
+    """Power of the paired t-test at ``n_pairs`` for a true d_z of ``effect_size`` (D013).
+
+    The paired t statistic has a noncentral t distribution with n - 1 degrees of freedom and
+    noncentrality d_z * sqrt(n). ``sided`` is 1 (the registered one-sided test) or 2.
+
+    Raises:
+        ValueError: If n_pairs < 2, effect_size <= 0, alpha is outside (0, 1) or sided is
+            not 1 or 2.
+    """
+    _check_power_args(effect_size, alpha, sided)
+    if n_pairs < 2:
+        raise ValueError(f'n_pairs must be >= 2, got {n_pairs}')
+    df = n_pairs - 1
+    ncp = effect_size * np.sqrt(n_pairs)
+    if sided == 1:
+        t_crit = stats.t.ppf(1.0 - alpha, df)
+        return float(1.0 - stats.nct.cdf(t_crit, df, ncp))
+    t_crit = stats.t.ppf(1.0 - alpha / 2.0, df)
+    return float(1.0 - stats.nct.cdf(t_crit, df, ncp) + stats.nct.cdf(-t_crit, df, ncp))
+
+
+def power_analysis(
+    effect_size: float,
+    alpha: float = 0.05,
+    power: float = 0.8,
+    *,
+    sided: int,
+) -> int:
+    """Smallest number of pairs whose paired t-test reaches ``power`` for d_z = effect_size.
+
+    Uses the noncentral t distribution (D013; the normal approximation and the implicit
+    two-sidedness of the earlier version were defect D20). ``sided`` is required: 1 for the
+    registered one-sided family tests, 2 for two-sided use (G6). 12 pairs detect d_z >= 0.77 at
+    80% power one-sided; 5 pairs detect d_z >= 1.36.
+
+    Raises:
+        ValueError: If effect_size <= 0, alpha or power are outside (0, 1), or sided is not
+            1 or 2.
+    """
+    _check_power_args(effect_size, alpha, sided)
     if not 0 < power < 1:
         raise ValueError(f'power must be in (0,1), got {power}')
-
-    z_alpha = stats.norm.ppf(1 - alpha / 2)
-    z_beta = stats.norm.ppf(power)
-    n = ((z_alpha + z_beta) / effect_size) ** 2
-    return int(np.ceil(n))
+    n = 2
+    while achieved_power(n, effect_size, alpha, sided=sided) < power:
+        n += 1
+        if n > 1_000_000:  # pragma: no cover
+            raise RuntimeError('power_analysis did not converge')
+    return n

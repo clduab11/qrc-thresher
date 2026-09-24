@@ -1,4 +1,4 @@
-"""Scoring metrics: Memory Capacity (MC), NRMSE, classification accuracy.
+"""Scoring metrics: STM memory (k >= 1), Memory Capacity (MC), NRMSE, classification accuracy.
 
 All functions validate inputs and raise on non-finite values.
 """
@@ -53,6 +53,33 @@ def memory_capacity(
         mc += corr**2
     logger.debug('MC computed: %.4f (over %d delays)', mc, y_true.shape[1])
     return float(mc)
+
+
+def stm_memory(y_pred: np.ndarray, y_true: np.ndarray) -> float:
+    """The STM memory sum over delays k >= 1 (docs/DECISIONS.md D011, D013; defect D10).
+
+    Column k of ``y_true`` is u_{t-k}; column 0 (k = 0, the present input) is never memory and
+    is excluded. This is the one scoring function every model, tuner and ablation uses for STM
+    (PI ruling 10, CP4b); ``memory_capacity`` over all columns gives ``mc_total``.
+
+    Args:
+        y_pred: Predicted targets of shape (T, K+1).
+        y_true: True targets of shape (T, K+1).
+
+    Returns:
+        sum_{k=1..K} corr(y_hat^{(k)}, y^{(k)})^2.
+
+    Raises:
+        ValueError: If inputs contain non-finite values or have fewer than two columns.
+        DegeneratePredictionError: If any prediction or target column k >= 1 is constant.
+    """
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+    y_true = np.asarray(y_true, dtype=np.float64)
+    if y_pred.ndim != 2 or y_true.ndim != 2 or y_true.shape[1] < 2:
+        raise ValueError(
+            f'stm_memory needs (T, K+1) targets with K >= 1; got {y_pred.shape} and {y_true.shape}'
+        )
+    return memory_capacity(y_pred[:, 1:], y_true[:, 1:])
 
 
 def nrmse(
