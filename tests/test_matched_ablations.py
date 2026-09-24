@@ -12,7 +12,8 @@ Switching the tested factor back on reproduces the reservoir: bit for bit for no
 phase_random, and within D010's tolerance for haar when each layer is fed the unitary of its own
 RZ, RX and CNOT ring. The ablation hashes follow D010's recipes. RKS (random_features) gets the
 reservoir's F and the per-pair stream default_rng([reservoir_seed, 3]); its window input and
-bandwidth wait for D13. An unknown ablation name is refused. The ablation command runs every
+bandwidth are D011's (tests/test_tuning.py), and it is a baseline, not an ablation command. An
+unknown ablation name is refused. The ablation command takes the task as an argument, runs every
 seed pair of the config and has no --seed option. The builtin plugins phase_random, no_entangle
 and haar return the matched ablations; phase_random and haar refuse reservoir_seed=None. The
 legacy functions in reservoirs/ablations.py are deprecated, with warnings that name them.
@@ -42,7 +43,7 @@ from qrc_thresher.reservoirs.pennylane_qrc import build_reservoir_params, comput
 REPO_ROOT = Path(__file__).parent.parent
 DEFAULT_CONFIG = REPO_ROOT / 'configs' / 'alpha_lite.yaml'
 ABLATIONS = ['phase_random', 'no_entangle', 'haar']
-COMMAND_NAMES = ['phase_random', 'no_entangle', 'haar', 'random_features']
+COMMAND_NAMES = ['phase_random', 'no_entangle', 'haar']  # RKS is a baseline (D011)
 READOUTS = ['z_only', 'z_and_zz']
 SEED_PAIRS = [(42, 137), (43, 138), (44, 139)]
 N_QUBITS, DEPTH = 4, 3
@@ -140,6 +141,7 @@ class TestHashes:
             rng=np.random.default_rng(137),
         )
         base = _sha(f'{compute_circuit_hash(params)},window=2')
+        base = _sha(f'{base},encoding_scale={float(np.pi)!r}')  # D011, PI ruling 8 (CP4b)
         reservoir_hash = wq.reservoir_from_config(cfg, reservoir_seed=137).circuit_hash
         assert reservoir_hash == base
         unitaries = wq.haar_layer_unitaries(n_qubits=N_QUBITS, depth=DEPTH, reservoir_seed=137)
@@ -238,10 +240,13 @@ class TestRandomStreams:
         wq = _wq()
         cfg = _config(readout, 2)
         rks = wq.rks_from_config(cfg, reservoir_seed=137)
+        # D010's default: sigma = 1 on u_t alone (d = 1); the bandwidth is sigma / sqrt(d) and
+        # the tuned sigma and d come from the tuning record (D011, tests/test_tuning.py).
         expected = build_rks_params(
-            n_features=n_features, sigma=1.0, rng=np.random.default_rng([137, 3])
+            n_features=n_features, sigma=1.0, rng=np.random.default_rng([137, 3]), window=1
         )
-        assert (rks.n_features, rks.sigma) == (n_features, 1.0)  # bandwidth waits for D13
+        assert (rks.n_features, rks.sigma, rks.window) == (n_features, 1.0, 1)
+        assert rks.W.shape == (n_features, 1)
         assert np.array_equal(rks.W, expected.W) and np.array_equal(rks.b, expected.b)
         assert not np.array_equal(wq.rks_from_config(cfg, reservoir_seed=138).W, rks.W)
         with pytest.raises(ValueError):
@@ -261,7 +266,8 @@ class TestAblationCommand:
         cfg_path = _tiny_parity_config(tmp_path)
         monkeypatch.chdir(tmp_path)
         seen = _spy_on_features(wq, monkeypatch)
-        result = CliRunner().invoke(cli, ['ablation', name, '--config', str(cfg_path)])
+        args = ['ablation', name, 'parity', '--config', str(cfg_path)]  # the task is an argument
+        result = CliRunner().invoke(cli, args)
         assert result.exit_code == 0, result.output
         rows = [
             r for r in _rows(Path('results') / 'runs.csv') if r['task_name'] == f'ablation:{name}'
@@ -272,14 +278,10 @@ class TestAblationCommand:
         assert len(set(hashes)) == 3
         assert all(re.fullmatch('[0-9a-f]{64}', h) for h in hashes), hashes
         cfg = load_config(cfg_path)
-        if name == 'random_features':
-            assert seen == []  # RKS never simulates the circuit
-            expected = [wq.rks_circuit_hash(wq.rks_from_config(cfg, r)) for _, r in SEED_PAIRS]
-        else:
-            assert set(seen) == {(2, r, name) for _, r in SEED_PAIRS}
-            expected = [
-                wq.reservoir_from_config(cfg, r, ablation=name).circuit_hash for _, r in SEED_PAIRS
-            ]
+        assert set(seen) == {(2, r, name) for _, r in SEED_PAIRS}
+        expected = [
+            wq.reservoir_from_config(cfg, r, ablation=name).circuit_hash for _, r in SEED_PAIRS
+        ]
         assert hashes == expected
 
     @pytest.mark.parametrize('name', COMMAND_NAMES)
@@ -290,13 +292,20 @@ class TestAblationCommand:
 
         cfg_path = _tiny_parity_config(tmp_path)
         monkeypatch.chdir(tmp_path)
-        args = ['ablation', name, '--config', str(cfg_path), '--seed', '1']
+        args = ['ablation', name, 'parity', '--config', str(cfg_path), '--seed', '1']
         result = CliRunner().invoke(cli, args)
         assert result.exit_code == 2, f'exit code {result.exit_code}: {result.output[-300:]}'
         assert not (tmp_path / 'results' / 'runs.csv').exists()
 
-    def test_random_features_is_not_an_enabled_baseline_until_d13(self) -> None:
+    def test_random_features_is_a_baseline_of_the_comparative_config_not_an_ablation(
+        self,
+    ) -> None:
+        from qrc_thresher.commands.ablation import ABLATION_NAMES
+
         assert load_config(DEFAULT_CONFIG).baseline.enabled == ['esn']
+        comparative = load_config(REPO_ROOT / 'configs' / 'comparative.yaml')
+        assert comparative.baseline.enabled == ['esn', 'random_features']
+        assert 'random_features' not in ABLATION_NAMES  # RKS runs through `baseline` (D011)
 
 
 class TestPlugins:

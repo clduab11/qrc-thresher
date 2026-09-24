@@ -67,7 +67,7 @@ class TestMeasurementConfig:
 
 class TestMeasurementManifest:
     def test_schema_version_includes_measurement_model(self) -> None:
-        assert tuple(int(p) for p in SCHEMA_VERSION.split('.')) >= (1, 2)
+        assert tuple(int(p) for p in SCHEMA_VERSION.split('.')) >= (1, 4)  # 1.4 since D013
 
     def test_manifest_records_measurement_model(self) -> None:
         assert _manifest().measurement_model == 'exact'

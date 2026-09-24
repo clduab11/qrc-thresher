@@ -12,7 +12,8 @@ t - (j mod w) < 0. These tests pin:
   k >= w and every future input, and moves by more than 1e-6 when u_{t-k} changes, for each
   k < w;
 - the D010 rules: the window draws no randomness, the circuit hash is compute_circuit_hash at
-  w = 1 and includes w otherwise, and a window outside 1..n_qubits is refused;
+  w = 1 and includes w otherwise (followed, since D011 / PI ruling 8, by the encoding scale),
+  and a window outside 1..n_qubits is refused;
 - the per-call row cache is bit for bit the per-step loop;
 - every config-driven build goes through the helper: a grep over src/, and the engine and the
   run command honour reservoir.window on the stm, parity and narma tasks.
@@ -279,6 +280,10 @@ class TestAnglesHashAndRefusal:
                 expected = base
             else:
                 expected = hashlib.sha256(f'{base},window={window}'.encode()).hexdigest()
+            # PI ruling 8 (CP4b, D011): the encoding scale (pi here) is in the preimage too.
+            expected = hashlib.sha256(
+                f'{expected},encoding_scale={float(reservoir.encoding_scale)!r}'.encode()
+            ).hexdigest()
             assert reservoir.circuit_hash == expected, window
             hashes.append(reservoir.circuit_hash)
         assert len(set(hashes)) == 4
@@ -370,11 +375,12 @@ class TestRouting:
         cfg_path = _tiny_config_file(tmp_path, task, window=2)
         monkeypatch.chdir(tmp_path)
         seen = _spy_on_features(wq, monkeypatch)
-        assert run_handler(task, str(cfg_path), None) == 0
-        assert set(seen) == {(2, 137, None)}
+        assert run_handler(task, str(cfg_path)) == 0  # every seed pair, no --seed (D013)
+        assert set(seen) == {(2, r, None) for _, r in ROUTING_PAIRS}
         rows = _rows(Path('results') / 'runs.csv')
-        expected = wq.reservoir_from_config(load_config(cfg_path), 137).circuit_hash
-        assert [r['circuit_hash'] for r in rows] == [expected]
+        cfg = load_config(cfg_path)
+        expected = [wq.reservoir_from_config(cfg, r).circuit_hash for _, r in ROUTING_PAIRS]
+        assert [r['circuit_hash'] for r in rows] == expected
 
 
 def _calls(tree: ast.AST, name: str) -> list:

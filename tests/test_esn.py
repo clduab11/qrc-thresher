@@ -3,8 +3,10 @@
 - Every unit sees the input, the recurrent matrix is dense, and a draw whose spectral radius
   cannot be scaled is refused.
 - One reservoir draw per reservoir_seed; hyperparameters rescale that same draw, and the
-  deployed ESN is the validated one (identical weight hashes).
-- Selection uses contiguous validation blocks inside the post-washout training rows only.
+  deployed ESN is the validated one (identical weight hashes). Since D011 the draw carries an
+  input bias (tests/test_tuning.py).
+- Selection uses contiguous validation blocks inside the post-washout training rows only, on
+  the memory sum over k >= 1 (D011).
 - Known answer: a 4-unit linear ESN reaches total memory capacity >= 0.75 N = 3.0.
 """
 
@@ -69,8 +71,9 @@ class TestWiring:
         params = esn.ESNParams(spectral_radius=0.9, input_scaling=0.5, leak_rate=0.3)
         model = esn.build_esn(esn.draw_reservoir(4, 137), params)
         u = np.random.default_rng(42).uniform(-1.0, 1.0, size=200)
+        # The input bias b = input_scaling * b_unit enters inside the tanh (D011).
         reference = Reservoir(
-            W=model.W, Win=model.Win, bias=np.zeros(4), lr=params.leak_rate
+            W=model.W, Win=model.Win, bias=model.b, lr=params.leak_rate
         ).run(u.reshape(-1, 1))
         np.testing.assert_allclose(model.states(u), reference, rtol=0, atol=1e-12)
 
@@ -164,8 +167,11 @@ class TestTuning:
             for fit_idx, val_idx in KFold(n_splits=folds).split(rows):
                 fit_rows, val_rows = rows[fit_idx], rows[val_idx]
                 model = fit_ridge_cv(X[fit_rows], ds.targets[fit_rows], alphas, folds)
-                scores.append(memory_capacity(model.predict(X[val_rows]), ds.targets[val_rows]))
+                pred = model.predict(X[val_rows])
+                # The selection metric is the memory sum over k >= 1 (D011); k = 0 is excluded.
+                scores.append(memory_capacity(pred[:, 1:], ds.targets[val_rows][:, 1:]))
             assert record['score'] == pytest.approx(float(np.mean(scores)), abs=1e-10)
+        assert search.score_name == 'stm_memory'
 
     def test_an_unrelated_error_is_raised_not_flagged(self, default_config, monkeypatch) -> None:
         esn = _esn()

@@ -6,8 +6,11 @@
 - The Qiskit side builds its circuit independently: it imports nothing from PennyLane or from
   qrc_thresher, directly, relatively or dynamically.
 - G0.5 checks (n, L, seed) = (2, 2, 2026), (4, 3, 137) and (5, 4, 7), at each distinct w in
-  {1, 2, n}, with both readouts, over 6 steps that include the zero-padded rows, and its
-  evidence lists every case with its max |diff|.
+  {1, 2, n}, with both readouts, over 6 steps that include the zero-padded rows, at the
+  encoding scale pi (16 cases), plus the registered scale cases G05_SCALE_CASES: scale in
+  {pi/4, pi/2, 3pi/4} on (4, 3, 137) at w in {1, 2, 4} with both readouts (18 cases; D011).
+  Its evidence lists every case, keyed by (n, depth, seed, window, readout, scale), with its
+  max |diff|: 34 cases.
 - Power, on the (4, 3, 137) triple (6 cases) to keep the suite fast:
   - on the Qiskit side, changing one angle by 1e-3 or shifting the window by one step makes
     every case fail;
@@ -16,7 +19,9 @@
     also check that the Qiskit side was called once per case, with the case's window and
     readout, the (4, 3, 137) triple and inputs, and a (6, F) output;
   - on the PennyLane side, shifting WindowedReservoir.features by 1e-3 fails every case, which
-    ties G0.5 to the production reservoir.
+    ties G0.5 to the production reservoir;
+  - on the scale cases, a Qiskit side that ignores the requested scale (and so encodes at pi)
+    fails every scale case: the scale axis is live on both sides.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from __future__ import annotations
 import ast
 import functools
 import importlib
+import math
 from pathlib import Path
 
 import numpy as np
@@ -35,12 +41,20 @@ SRC = REPO_ROOT / 'src' / 'qrc_thresher'
 QISKIT_MODULE = SRC / 'reservoirs' / 'qiskit_crosscheck.py'
 TRIPLES = [(2, 2, 2026), (4, 3, 137), (5, 4, 7)]  # (n_qubits, depth, seed)
 READOUTS = ['z_only', 'z_and_zz']
-EXPECTED_CASES = {
-    (n, depth, seed, window, readout)
+SCALES = [math.pi / 4, math.pi / 2, 3 * math.pi / 4]  # the registered scale cases (D011)
+EXPECTED_PI_CASES = {
+    (n, depth, seed, window, readout, math.pi)
     for n, depth, seed in TRIPLES
     for window in sorted({1, 2, n})
     for readout in READOUTS
 }
+EXPECTED_SCALE_CASES = {
+    (4, 3, 137, window, readout, scale)
+    for scale in SCALES
+    for window in (1, 2, 4)
+    for readout in READOUTS
+}
+EXPECTED_CASES = EXPECTED_PI_CASES | EXPECTED_SCALE_CASES
 N_STEPS = 6
 POWER_TRIPLES = ((4, 3, 137),)
 POWER_CASES = {(window, readout) for window in (1, 2, 4) for readout in READOUTS}
@@ -153,9 +167,13 @@ class TestCoverage:
     def test_the_evidence_lists_every_case_with_its_max_diff(self) -> None:
         _, evidence, _ = _g05()
         cases = evidence['cases']
-        listed = [(c['n_qubits'], c['depth'], c['seed'], c['window'], c['readout']) for c in cases]
-        assert len(listed) == len(EXPECTED_CASES) == 16
+        listed = [
+            (c['n_qubits'], c['depth'], c['seed'], c['window'], c['readout'], c['encoding_scale'])
+            for c in cases
+        ]
+        assert len(listed) == len(EXPECTED_CASES) == 34
         assert set(listed) == EXPECTED_CASES
+        assert len(EXPECTED_PI_CASES) == 16 and len(EXPECTED_SCALE_CASES) == 18
         for case in cases:
             assert case['n_steps'] == N_STEPS
             assert case['n_zero_padded_rows'] == case['window'] - 1
@@ -163,14 +181,21 @@ class TestCoverage:
             assert case['max_abs_diff'] <= 1e-6
             assert case['passed'] is True
 
+    def test_the_registered_scale_cases_are_separate_from_the_triples(self) -> None:
+        gate = _gate()
+        assert gate.G05_TRIPLES == ((2, 2, 2026), (4, 3, 137), (5, 4, 7))
+        assert set(gate.G05_SCALE_CASES) == EXPECTED_SCALE_CASES
+        assert len(gate.G05_SCALE_CASES) == 18
+
 
 def _perturb_one_feature(delta: float, index: int, calls: list):
     """Qiskit-side wrapper: add ``delta`` to out.flat[index] of every case, and record each call."""
 
     def wrap(real):
-        def perturbed(u, thetas, phis, n_qubits, depth, window, readout):
+        def perturbed(u, thetas, phis, n_qubits, depth, window, readout, encoding_scale=math.pi):
             out = np.array(
-                real(u, thetas, phis, n_qubits, depth, window, readout),
+                real(u, thetas, phis, n_qubits, depth, window, readout,
+                     encoding_scale=encoding_scale),
                 dtype=np.float64,
                 copy=True,
             )
@@ -180,6 +205,7 @@ def _perturb_one_feature(delta: float, index: int, calls: list):
                     'depth': depth,
                     'window': window,
                     'readout': readout,
+                    'encoding_scale': encoding_scale,
                     'shape': out.shape,
                     'u': np.array(u, dtype=np.float64, copy=True),
                 }
@@ -202,13 +228,15 @@ def _assert_calls_cover_the_power_cases(calls: list) -> None:
     inputs = rng.uniform(-1.0, 1.0, size=N_STEPS)  # the next 6 draws after the angles
     for call in calls:
         assert (call['n_qubits'], call['depth']) == (4, 3), call
+        assert call['encoding_scale'] == math.pi, call
         assert call['shape'] == (N_STEPS, N_FEATURES[call['readout']]), call
         assert np.array_equal(call['u'], inputs), call
 
 
 class TestPower:
     @staticmethod
-    def _run(monkeypatch, qiskit_wrap=None, pennylane_wrap=None) -> tuple:
+    def _run(monkeypatch, qiskit_wrap=None, pennylane_wrap=None, scale_cases=()) -> tuple:
+        """G0.5 on the power triple at pi (6 cases); the scale cases only when asked for."""
         gate, qc = _gate(), _qc()
         if qiskit_wrap is not None:
             monkeypatch.setattr(qc, 'qiskit_features', qiskit_wrap(qc.qiskit_features))
@@ -216,7 +244,8 @@ class TestPower:
             wq = _wq()
             wrapped = pennylane_wrap(wq.WindowedReservoir.features)
             monkeypatch.setattr(wq.WindowedReservoir, 'features', wrapped)
-        monkeypatch.setattr(gate, 'G05_TRIPLES', POWER_TRIPLES)
+        monkeypatch.setattr(gate, 'G05_TRIPLES', POWER_TRIPLES if not scale_cases else ())
+        monkeypatch.setattr(gate, 'G05_SCALE_CASES', tuple(scale_cases))
         return gate._evaluate_gate_g05()
 
     @staticmethod
@@ -237,10 +266,12 @@ class TestPower:
 
     def test_one_angle_off_by_1e_3_fails(self, monkeypatch) -> None:
         def wrap(real):
-            def one_angle_off(u, thetas, phis, n_qubits, depth, window, readout):
+            def one_angle_off(u, thetas, phis, n_qubits, depth, window, readout,
+                              encoding_scale=math.pi):
                 thetas = np.array(thetas, dtype=np.float64, copy=True)
                 thetas[0, 0] += 1e-3
-                return real(u, thetas, phis, n_qubits, depth, window, readout)
+                return real(u, thetas, phis, n_qubits, depth, window, readout,
+                            encoding_scale=encoding_scale)
 
             return one_angle_off
 
@@ -248,10 +279,12 @@ class TestPower:
 
     def test_a_window_shifted_by_one_step_fails(self, monkeypatch) -> None:
         def wrap(real):
-            def shifted(u, thetas, phis, n_qubits, depth, window, readout):
+            def shifted(u, thetas, phis, n_qubits, depth, window, readout,
+                        encoding_scale=math.pi):
                 u = np.asarray(u, dtype=np.float64)
                 late = np.concatenate([[0.0], u[:-1]])  # every qubit sees one step further back
-                return real(late, thetas, phis, n_qubits, depth, window, readout)
+                return real(late, thetas, phis, n_qubits, depth, window, readout,
+                            encoding_scale=encoding_scale)
 
             return shifted
 
@@ -283,3 +316,30 @@ class TestPower:
             return shifted
 
         self._assert_every_case_failed(*self._run(monkeypatch, pennylane_wrap=wrap)[:2])
+
+    def test_a_qiskit_side_that_ignores_the_scale_fails_every_scale_case(self, monkeypatch) -> None:
+        calls: list = []
+
+        def wrap(real):
+            def at_pi(u, thetas, phis, n_qubits, depth, window, readout, encoding_scale=math.pi):
+                calls.append(encoding_scale)
+                return real(u, thetas, phis, n_qubits, depth, window, readout)  # pi, whatever
+
+            return at_pi
+
+        result, evidence, _ = self._run(monkeypatch, qiskit_wrap=wrap,
+                                        scale_cases=_gate().G05_SCALE_CASES)
+        assert 'error' not in evidence, evidence.get('error')
+        cases = evidence['cases']
+        assert len(cases) == 18
+        assert {(c['window'], c['readout'], c['encoding_scale']) for c in cases} == {
+            (w, r, s) for w in (1, 2, 4) for r in READOUTS for s in SCALES
+        }
+        assert sorted(calls) == sorted(c['encoding_scale'] for c in cases)
+        assert result == 'FAIL'
+        assert all(c['passed'] is False and c['max_abs_diff'] > 1e-6 for c in cases), cases
+        # The same 18 cases pass when the scale reaches the Qiskit side.
+        monkeypatch.undo()
+        result, evidence, _ = self._run(monkeypatch, scale_cases=_gate().G05_SCALE_CASES)
+        assert result == 'PASS', evidence
+        assert all(c['passed'] for c in evidence['cases']) and len(evidence['cases']) == 18

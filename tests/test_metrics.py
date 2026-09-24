@@ -146,7 +146,7 @@ class TestPairedTest:
         scores = np.random.default_rng(0).normal(0, 1, size=10)
         result = paired_test(scores, scores)
         assert result.mean_diff == 0.0
-        assert result.cohens_d == 0.0
+        assert result.d_z is None  # null at zero variance (docs/DECISIONS.md D013)
 
     def test_length_mismatch_raises(self) -> None:
         a = np.array([1.0, 2.0])
@@ -160,12 +160,13 @@ class TestPairedTest:
         with pytest.raises(ValueError, match='at least 2'):
             paired_test(a, b)
 
-    def test_cohens_d_sign(self) -> None:
+    def test_d_z_sign(self) -> None:
         rng = np.random.default_rng(0)
         a = rng.normal(1.0, 0.1, size=20)
         b = rng.normal(0.0, 0.1, size=20)
         result = paired_test(a, b)
-        assert result.cohens_d > 0
+        assert result.d_z > 0
+        assert not hasattr(result, 'cohens_d')
 
 
 class TestBootstrapCI:
@@ -215,20 +216,29 @@ class TestBcaCI:
 
 
 class TestPowerAnalysis:
-    """Tests for power_analysis sample-size estimator."""
+    """Tests for power_analysis sample-size estimator (sidedness required; D013)."""
 
     def test_positive_result(self) -> None:
-        n = power_analysis(effect_size=0.5, alpha=0.05, power=0.8)
+        n = power_analysis(effect_size=0.5, alpha=0.05, power=0.8, sided=2)
         assert n > 0
 
     def test_larger_effect_requires_fewer_samples(self) -> None:
-        n_small = power_analysis(effect_size=0.3, alpha=0.05, power=0.8)
-        n_large = power_analysis(effect_size=0.8, alpha=0.05, power=0.8)
+        n_small = power_analysis(effect_size=0.3, alpha=0.05, power=0.8, sided=1)
+        n_large = power_analysis(effect_size=0.8, alpha=0.05, power=0.8, sided=1)
         assert n_large < n_small
+
+    def test_one_sided_needs_fewer_pairs_than_two_sided(self) -> None:
+        one = power_analysis(effect_size=0.5, alpha=0.05, power=0.8, sided=1)
+        two = power_analysis(effect_size=0.5, alpha=0.05, power=0.8, sided=2)
+        assert one < two
 
     def test_invalid_effect_size_raises(self) -> None:
         with pytest.raises(ValueError, match='effect_size'):
-            power_analysis(effect_size=0.0)
+            power_analysis(effect_size=0.0, sided=1)
+
+    def test_sidedness_is_required(self) -> None:
+        with pytest.raises(TypeError):
+            power_analysis(effect_size=0.5)
 
 
 class TestHolmBonferroni:

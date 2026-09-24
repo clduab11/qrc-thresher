@@ -20,8 +20,13 @@ from qrc_thresher.proof.run_manifest import (
     create_manifest,
 )
 
-# The schema 1.1 header: everything before measurement_model was added.
-SCHEMA_1_1_HEADER = [c for c in CSV_FIELDNAMES if c != 'measurement_model']
+# The schema 1.1 header: everything before measurement_model was added (and before the 1.4
+# columns; tests/test_manifest_schema14.py covers the 1.3 -> 1.4 refusal).
+SCHEMA_1_1_HEADER = [
+    c for c in CSV_FIELDNAMES
+    if c not in ('measurement_model', 'n_configs', 'n_validation_evals', 'secondary_metrics',
+                 'device', 'precision', 'design', 'sweep_id')
+]
 
 
 def _manifest():
