@@ -3,9 +3,12 @@
     uv run python ../qrc-tools/diff_runs.py results/runs.csv.archived_A results/runs.csv.archived_B results/runs.csv
     uv run python ../qrc-tools/diff_runs.py --family results/gates/COMPARATIVE.v1.<stampA>.json results/gates/COMPARATIVE.v1.<stampB>.json
 
-Rows are joined on (task_name, design, circuit_hash, task_seed, reservoir_seed). The values that
-must agree between deterministic replicates are compared exactly: primary_metric_name,
-primary_metric_value, every secondary metric, n_configs, n_validation_evals, success. The columns
+Rows are joined on (task_name, design, circuit_hash, primary_metric_name, task_seed,
+reservoir_seed). The metric is part of the key because an ablation row carries no task: the tuned
+design's no-entangle ablation run on STM and on parity is the same circuit (same hash, same design
+label, same pair) scored with a different metric (D015). The values that must agree between
+deterministic replicates are compared exactly: primary_metric_value, every secondary metric,
+n_configs, n_validation_evals, success. The columns
 that legitimately differ between runs (run_id, timestamps, git commit, sweep id, record sha,
 runtimes, platform, versions, artifact paths) are summarised per file instead.
 """
@@ -18,8 +21,8 @@ from pathlib import Path
 
 import pandas as pd
 
-KEY = ['task_name', 'design', 'circuit_hash', 'task_seed', 'reservoir_seed']
-EXACT = ['primary_metric_name', 'primary_metric_value', 'n_configs', 'n_validation_evals', 'success']
+KEY = ['task_name', 'design', 'circuit_hash', 'primary_metric_name', 'task_seed', 'reservoir_seed']
+EXACT = ['primary_metric_value', 'n_configs', 'n_validation_evals', 'success']
 PER_FILE = ['git_commit_hash', 'git_branch', 'sweep_id', 'python_version', 'platform', 'config_hash',
             'measurement_model']
 
