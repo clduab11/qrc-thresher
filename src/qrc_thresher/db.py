@@ -168,8 +168,8 @@ class ExperimentDB:
         try:
             with filelock.FileLock(str(lock_path), timeout=30):
                 self._write_csv_row(manifest, csv_path)
-        except RunsCsvSchemaError:
-            raise
+        except (RunsCsvSchemaError, RunsCsvWriteError):
+            raise  # RunsCsvWriteError is already named by check_runs_csv_header
         except (OSError, filelock.Timeout) as exc:
             raise RunsCsvWriteError(csv_path, exc) from exc
 

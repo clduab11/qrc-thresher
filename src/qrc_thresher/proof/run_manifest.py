@@ -106,11 +106,20 @@ def check_runs_csv_header(csv_path: Path) -> None:
 
     Raises:
         RunsCsvSchemaError: If the file's header differs from CSV_FIELDNAMES.
+        RunsCsvWriteError: If the path cannot be read as a file (a directory in its place, a
+            permission problem). Raised here, before any writer, so that every platform fails
+            the same way: Windows reports st_size 0 for a directory and Linux does not, which
+            is how this escaped as a bare IsADirectoryError on Linux (CP4b.1 item A3).
     """
-    if not csv_path.exists() or csv_path.stat().st_size == 0:
-        return
-    with csv_path.open(newline='') as f:
-        existing = next(csv.reader(f), [])
+    try:
+        if csv_path.is_dir():
+            raise IsADirectoryError(f'{csv_path.as_posix()} is a directory, not a file')
+        if not csv_path.exists() or csv_path.stat().st_size == 0:
+            return
+        with csv_path.open(newline='') as f:
+            existing = next(csv.reader(f), [])
+    except OSError as exc:
+        raise RunsCsvWriteError(csv_path, exc) from exc
     if existing == CSV_FIELDNAMES:
         return
     missing = [c for c in CSV_FIELDNAMES if c not in existing]
@@ -423,6 +432,8 @@ def append_to_csv(manifest: RunManifest, csv_path: Path = _RUNS_CSV) -> None:
             if write_header:
                 writer.writeheader()
             writer.writerow(row)
+    except RunsCsvWriteError:
+        raise  # already named by check_runs_csv_header; do not wrap it twice
     except OSError as exc:
         raise RunsCsvWriteError(csv_path, exc) from exc
 
