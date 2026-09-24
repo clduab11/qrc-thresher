@@ -1,21 +1,23 @@
-"""Echo state network (ESN) baseline (defects D9 and D5; docs/DECISIONS.md D009).
+"""Echo state network (ESN) baseline (defects D9 and D5; docs/DECISIONS.md D009, D011).
 
 The ESN is implemented directly in numpy with the standard leaky-integrator update
 
-    x_t = (1 - a) x_{t-1} + a tanh(rho W_hat x_{t-1} + s W_in u_t),   x_{-1} = 0,
+    x_t = (1 - a) x_{t-1} + a tanh(rho W_hat x_{t-1} + s (W_in u_t + b_in)),   x_{-1} = 0,
 
 where W_hat is the recurrent draw normalised to spectral radius 1, rho the spectral radius,
-s the input scaling and a the leak rate. There is no bias term. The update matches
-ReservoirPy's Reservoir given the same matrices (tests/test_esn.py cross-checks it).
+s the input scaling, a the leak rate and b_in the input bias (D011; D009 had none). The update
+matches ReservoirPy's Reservoir given the same matrices and bias (tests/test_esn.py).
 
 Wiring rule: every unit receives the input (input connectivity 1.0), and the recurrent
 matrix is dense (recurrent connectivity 1.0, self-connections included). A draw whose
 spectral radius cannot be scaled (non-finite, or at most 1e-8), or whose scaled weights
 are non-finite or larger than 1e3 in magnitude, is refused.
 
-One reservoir draw is made per reservoir_seed. Hyperparameters rescale that same draw, so
-a search compares hyperparameters, not random draws, and the deployed ESN is the validated
-one (identical weight hashes).
+One reservoir draw is made per reservoir_seed: W_hat, then W_in, then b_in from one stream, so
+W_hat and W_in are unchanged from D009 for every seed. Hyperparameters rescale that same draw,
+so a search compares hyperparameters, not random draws, and the deployed ESN is the validated
+one (identical weight hashes). The search itself is the shared tuner of D011
+(qrc_thresher.tuning.select_configuration); only the grid, the draw and the states are ESN-specific.
 
 Feature matching: N_ESN = N_quantum_features (n for z_only, n + n(n-1)/2 for z_and_zz),
 never 2^n.
@@ -69,11 +71,13 @@ class ReservoirDraw:
         reservoir_seed: Seed of the draw.
         W_unit: Dense recurrent weights normalised to spectral radius 1, shape (N, N).
         Win_unit: Dense input weights in [-1, 1] at input scaling 1, shape (N, 1).
+        b_unit: Input bias in [-1, 1] at input scaling 1, shape (N,) (D011).
     """
 
     reservoir_seed: int
     W_unit: np.ndarray
     Win_unit: np.ndarray
+    b_unit: np.ndarray
 
     @property
     def n_units(self) -> int:
@@ -88,6 +92,11 @@ class ESN:
     Win: np.ndarray
     params: ESNParams
     reservoir_seed: int
+    b: np.ndarray = None  # type: ignore[assignment]  # input bias, shape (N,); D011
+
+    def __post_init__(self) -> None:
+        if self.b is None:
+            object.__setattr__(self, 'b', np.zeros(self.W.shape[0], dtype=np.float64))
 
     @property
     def n_units(self) -> int:
@@ -104,7 +113,7 @@ class ESN:
         """
         u = np.asarray(u, dtype=np.float64).ravel()
         a = self.params.leak_rate
-        drive = u[:, None] * self.Win[:, 0][None, :]  # (T, N)
+        drive = u[:, None] * self.Win[:, 0][None, :] + self.b[None, :]  # (T, N), bias inside tanh
         x = np.zeros(self.n_units, dtype=np.float64)
         out = np.empty((len(u), self.n_units), dtype=np.float64)
         for t in range(len(u)):
@@ -115,19 +124,20 @@ class ESN:
         return out
 
     def weight_hash(self) -> str:
-        """SHA-256 of the scaled weights and leak rate: identifies the deployed ESN."""
+        """SHA-256 of the scaled weights, bias and leak rate: identifies the deployed ESN."""
         h = hashlib.sha256()
         h.update(f'esn:n={self.n_units}:a={self.params.leak_rate!r}:'.encode())
         h.update(np.ascontiguousarray(self.W, dtype=np.float64).tobytes())
         h.update(np.ascontiguousarray(self.Win, dtype=np.float64).tobytes())
+        h.update(np.ascontiguousarray(self.b, dtype=np.float64).tobytes())
         return h.hexdigest()
 
 
 def draw_reservoir(n_units: int, reservoir_seed: int) -> ReservoirDraw:
-    """Draw one dense reservoir from default_rng(reservoir_seed): W first, then W_in.
+    """Draw one dense reservoir from default_rng(reservoir_seed): W, then W_in, then b_in.
 
-    W has i.i.d. N(0, 1) entries and is normalised to spectral radius 1; W_in has i.i.d.
-    Uniform(-1, 1) entries.
+    W has i.i.d. N(0, 1) entries and is normalised to spectral radius 1; W_in and b_in have
+    i.i.d. Uniform(-1, 1) entries (b_in after W_in, so W and W_in match D009's draw).
 
     Raises:
         ValueError: If n_units < 1, or the draw cannot be scaled (see scale_recurrent).
@@ -137,8 +147,10 @@ def draw_reservoir(n_units: int, reservoir_seed: int) -> ReservoirDraw:
     rng = np.random.default_rng(reservoir_seed)
     W = rng.normal(0.0, 1.0, size=(n_units, n_units))
     Win = rng.uniform(-1.0, 1.0, size=(n_units, 1))
+    b = rng.uniform(-1.0, 1.0, size=n_units)
     return ReservoirDraw(
-        reservoir_seed=int(reservoir_seed), W_unit=scale_recurrent(W, 1.0), Win_unit=Win
+        reservoir_seed=int(reservoir_seed), W_unit=scale_recurrent(W, 1.0), Win_unit=Win,
+        b_unit=b,
     )
 
 
@@ -175,9 +187,11 @@ def build_esn(draw: ReservoirDraw, params: ESNParams) -> ESN:
         raise ValueError(f'leak rate must be in (0, 1]; got {params.leak_rate}')
     W = draw.W_unit * params.spectral_radius
     Win = draw.Win_unit * params.input_scaling
+    b = np.asarray(draw.b_unit, dtype=np.float64) * params.input_scaling
     _check_weights(W, 'recurrent')
     _check_weights(Win, 'input')
-    return ESN(W=W, Win=Win, params=params, reservoir_seed=draw.reservoir_seed)
+    _check_weights(b, 'bias')
+    return ESN(W=W, Win=Win, params=params, reservoir_seed=draw.reservoir_seed, b=b)
 
 
 def esn_feature_map(n_units: int, params: ESNParams) -> Callable[[np.ndarray, int], np.ndarray]:
@@ -200,7 +214,8 @@ class ESNSearch:
             score (None if degenerate), degeneracy flag and reason, weight hash.
         n_configs: Number of configurations evaluated.
         n_validation_evals: Configuration x validation-block evaluations.
-        score_name: Validation score maximised ('mc', 'neg_nrmse' or 'accuracy').
+        score_name: The selection metric ('stm_memory', 'accuracy' or 'nrmse'; D011).
+        higher_is_better: False for 'nrmse'.
     """
 
     best: ESNParams
@@ -209,6 +224,7 @@ class ESNSearch:
     n_configs: int
     n_validation_evals: int
     score_name: str
+    higher_is_better: bool = True
 
 
 def tune_esn(
@@ -222,16 +238,15 @@ def tune_esn(
     cv_folds: int,
     task: str,
 ) -> ESNSearch:
-    """Select ESN hyperparameters on contiguous validation blocks of the training rows.
+    """Select ESN hyperparameters with the shared tuner of D011 on one reservoir draw.
 
-    Every configuration rescales the same draw. Its states come from one run over the
-    whole input sequence (inputs only, never targets). The training rows after the
-    washout, [washout, train_end), are split into ``cv_folds`` contiguous blocks; each
-    block is predicted by the harness readout fitted on the other blocks (computed with
-    readout.fit_ridge_cv_batched, which reproduces RidgeCV), and scored with the task's
-    primary metric. Test rows are never used. A configuration whose states are non-finite,
-    or whose predictions are degenerate (metrics.scoring.DegeneratePredictionError), is
-    flagged and never selected; any other error propagates.
+    Every configuration rescales the same draw; its states come from one run over the whole
+    input sequence (one feature matrix per configuration). The training rows after the washout
+    are split into ``cv_folds`` contiguous validation blocks, each predicted by the harness
+    readout fitted on the other blocks and scored with the task's selection metric
+    (`stm_memory` over k >= 1, accuracy, or NRMSE lower is better). Test rows are never used.
+    A configuration whose states are non-finite or whose predictions are degenerate is flagged
+    and never selected; any other error propagates.
 
     Args:
         u: Input sequence, shape (T,).
@@ -239,10 +254,10 @@ def tune_esn(
         train_end: First test row.
         draw: The reservoir draw for this reservoir_seed.
         grid: Lists of spectral_radius, input_scaling and leak_rate values.
-        washout: Leading rows dropped from selection, training and scoring.
+        washout: Leading rows dropped from selection, training and scoring (training.washout).
         ridge_alphas: Harness readout penalties (training.ridge_alphas).
         cv_folds: Number of validation blocks, and the readout's inner fold count.
-        task: 'stm' (maximise MC), 'narma' (minimise NRMSE) or 'parity' (accuracy).
+        task: 'stm', 'narma' or 'parity'.
 
     Returns:
         The search outcome, with its budget.
@@ -251,59 +266,46 @@ def tune_esn(
         ValueError: If the grid is malformed or there are too few training rows.
         RuntimeError: If every configuration is degenerate.
     """
-    from sklearn.model_selection import KFold
+    from qrc_thresher.tuning import Candidate, select_configuration
 
-    from qrc_thresher.metrics.scoring import DegeneratePredictionError
-    from qrc_thresher.readout import fit_ridge_cv_batched
-
-    score_name, score = _score_function(task)
     configs = _grid_configs(grid)
-    rows = np.arange(washout, train_end)
-    if len(rows) < 2 * cv_folds:
-        raise ValueError(f'too few training rows after the washout: {len(rows)}')
-    blocks = list(KFold(n_splits=cv_folds).split(rows))
-    targets = np.asarray(targets, dtype=np.float64)
-
-    records = []
+    u = np.asarray(u, dtype=np.float64).ravel()
+    candidates = []
     for params in configs:
         esn = build_esn(draw, params)
-        record = {
-            'params': params.__dict__.copy(),
-            'score': None,
-            'degenerate': False,
-            'reason': None,
-            'weight_hash': esn.weight_hash(),
-        }
-        try:
-            X = esn.states(u)
-            block_scores = []
-            for fit_idx, val_idx in blocks:
-                # The harness readout (RidgeCV over ridge_alphas, contiguous folds), via its
-                # batched implementation: same alpha and predictions within 1e-10
-                # (tests/test_gate_g07.py), without GridSearchCV's per-fit overhead.
-                fit_rows, val_rows = rows[fit_idx], rows[val_idx]
-                y_fit = targets[fit_rows].reshape(len(fit_rows), -1, 1)
-                fit = fit_ridge_cv_batched(X[fit_rows], y_fit, ridge_alphas, cv_folds)
-                pred = fit.predict(X[val_rows])[:, :, 0].reshape(targets[val_rows].shape)
-                block_scores.append(score(pred, targets[val_rows]))
-            record['score'] = float(np.mean(block_scores))
-        except (DegeneratePredictionError, NonFiniteStatesError) as exc:
-            record.update({'degenerate': True, 'reason': str(exc)})
-        records.append(record)
-
-    scored = [i for i, r in enumerate(records) if not r['degenerate']]
-    if not scored:
-        raise RuntimeError('every ESN configuration was degenerate; nothing to select')
-    best_i = max(scored, key=lambda i: (records[i]['score'], -i))
-    best = configs[best_i]
-    logger.info('ESN search: best %s (%s = %.4f)', best, score_name, records[best_i]['score'])
+        candidates.append(
+            Candidate(
+                hyperparameters=params.__dict__.copy(),
+                circuit_hash=esn.weight_hash(),
+                features=(lambda model=esn: model.states(u)),
+            )
+        )
+    selection = select_configuration(
+        candidates, targets, train_end, washout, ridge_alphas, cv_folds, task,
+        degenerate_errors=(NonFiniteStatesError,),
+    )
+    records = []
+    for cand, rec in zip(candidates, selection.records):
+        records.append({
+            'params': dict(cand.hyperparameters),
+            'score': rec['score'],
+            'degenerate': rec['degenerate'],
+            'reason': rec['reason'],
+            'weight_hash': cand.circuit_hash,
+        })
+    best = configs[selection.best_index]
+    logger.info(
+        'ESN search: best %s (%s = %.4f)', best, selection.metric,
+        records[selection.best_index]['score'],
+    )
     return ESNSearch(
         best=best,
-        best_hash=records[best_i]['weight_hash'],
+        best_hash=candidates[selection.best_index].circuit_hash,
         configs=records,
-        n_configs=len(configs),
-        n_validation_evals=len(configs) * len(blocks),
-        score_name=score_name,
+        n_configs=selection.n_configs,
+        n_validation_evals=selection.n_validation_evals,
+        score_name=selection.metric,
+        higher_is_better=selection.higher_is_better,
     )
 
 
@@ -355,18 +357,6 @@ def _grid_configs(grid: Dict[str, Sequence[float]]) -> List[ESNParams]:
         ESNParams(spectral_radius=float(s), input_scaling=float(i), leak_rate=float(a))
         for s, i, a in product(grid['spectral_radius'], grid['input_scaling'], grid['leak_rate'])
     ]
-
-
-def _score_function(task: str):
-    from qrc_thresher.metrics.scoring import classification_accuracy, memory_capacity, nrmse
-
-    if task == 'stm':
-        return 'mc', lambda pred, y: memory_capacity(pred, y)
-    if task == 'narma':
-        return 'neg_nrmse', lambda pred, y: -nrmse(np.ravel(pred), np.ravel(y))
-    if task == 'parity':
-        return 'accuracy', lambda pred, y: classification_accuracy(np.ravel(pred), np.ravel(y))
-    raise ValueError(f'unknown task for ESN tuning: {task!r}')
 
 
 def _check_weights(W: np.ndarray, which: str) -> None:
