@@ -45,8 +45,8 @@ qrc-thresher tests it under rules that make the usual escape hatches unavailable
   quietly smaller.
 - **Reproducibility that has been checked.** Every result row records the commit, the config hash,
   the circuit hash, the seeds and the environment. The same locked dependencies reproduced the
-  same gate statistics to every recorded digit on Windows and on Linux, and two independent runs
-  of the registered sweep agreed row for row.
+  same gate statistics to every recorded digit on Windows and on Linux, and three complete runs
+  of the registered sweep, one in the builder's sandbox and two on the host, agreed row for row.
 
 The tasks are synthetic and standard — short-term memory, temporal parity (XOR over a window) and
 NARMA-10 — on 4-qubit simulated circuits against a 4-unit echo state network and 4-feature random
@@ -56,9 +56,24 @@ every report says so.
 
 ## Where it stands
 
-The harness is complete and the first comparative protocol (`COMPARATIVE.v1`) is frozen. The
-first registered sweep is the next step. There is no comparative result yet, and when there is,
-it will be published as `pass`, `fail` or `inconclusive` — the same way whichever way it goes.
+The first registered sweep of `COMPARATIVE.v1` is complete, and its verdicts are final for this
+version of the protocol: four gates failed and one passed.
+
+- On short-term memory and on NARMA-10 the tuned 4-qubit circuit lost to the echo state network
+  (12 of 12 seed pairs on memory). It did not beat its random-unitary copy, and it held less
+  memory than its own copy with the entangling gates removed.
+- The one pass, temporal parity against random Fourier features, has a closed-form mechanism.
+  The tuner chose a four-step input window, wide enough to hold every bit the task depends on,
+  and the circuit's sequential CNOT ring computes the XOR of those bits, so one qubit's readout
+  equals the target to one part in 10^15. That is classical logic on a static window, not
+  quantum memory, and the write-up says so.
+- The run of record is commit `8ed2df4`, sweep `20260924T214530147999Z`, 336 result rows. Two
+  other complete runs, one in the builder's sandbox and one earlier host run, agree with it row
+  for row to every recorded digit. It took four host attempts to get one clean, uninterrupted
+  run; the other three, and what happened to each, are in the decision log.
+
+No quantum advantage is claimed and none was found. The byte-exact evidence export, the scorecard
+and the decision entries recording this outcome are landing next (CP5).
 
 ## How it is built
 
@@ -66,8 +81,8 @@ Three roles, written into the decision log: a human principal investigator who m
 scientific and scope decision; a *builder* AI agent that writes code and tests in a sandbox with no
 access to git; and a *referee* that reviews every change, commits it, and runs the authoritative
 tests in a separate environment built from the lock file. Every decision since the project's
-redirection in September 2026 is recorded in [docs/DECISIONS.md](docs/DECISIONS.md) (D001–D016),
-including the ones that were wrong the first time. This is as much a working example of
+redirection in September 2026 is recorded in [docs/DECISIONS.md](docs/DECISIONS.md), including
+the ones that were wrong the first time. This is as much a working example of
 accountable AI-assisted research as it is a quantum computing benchmark.
 
 ---
@@ -154,7 +169,9 @@ gates, visualisations and noise models are discoverable through Python entry poi
 - [x] Executable gates G0, G0.5, G0.7, the family (G1, G2, G2.5, G3, G4), G5, G6, G7
 - [x] Cross-platform reproduction of gate statistics (Windows ↔ Linux, same lock file)
 - [x] CI matrix on Python 3.11 / 3.12 / 3.13 from the lock file
-- [ ] The first registered comparative sweep and its verdicts
+- [x] The first registered comparative sweep and its verdicts: four gates failed, one passed with
+      its mechanism traced; three complete runs agree row for row
+- [ ] Byte-exact evidence export and scorecard for the sweep (CP5, in progress)
 - [ ] Finite-shot measurement model (exact expectation values are the oracle upper bound until then)
 - [ ] Carried-state reservoir designs (Phase 2)
 
@@ -162,7 +179,7 @@ gates, visualisations and noise models are discoverable through Python entry poi
 
 - [docs/BUILD_SPEC.md](docs/BUILD_SPEC.md) — the build specification (v1.1)
 - [docs/METHODOLOGY.md](docs/METHODOLOGY.md) — tasks, circuit, baselines, statistics, disclosures
-- [docs/DECISIONS.md](docs/DECISIONS.md) — the append-only decision log, D001–D016
+- [docs/DECISIONS.md](docs/DECISIONS.md) — the append-only decision log
 - [configs/gates/](configs/gates/) — the frozen gate protocols
 - [docs/REFERENCES.md](docs/REFERENCES.md) — literature
 

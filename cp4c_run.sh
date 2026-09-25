@@ -110,7 +110,7 @@ if [ -n "${FAMILY:-}" ]; then
   uv run python - "$FAMILY" <<'EOF' | tee -a "$LOG"
 import json, sys
 r = json.load(open(sys.argv[1], encoding='utf-8'))
-print(f"protocol {r['protocol_sha256'][:16]}…  commit {r['git_commit']}  sweep {r['sweep_id']}  rows {r['n_rows']}")
+print(f"protocol {r['protocol_sha256'][:16]}...  commit {r['git_commit']}  sweep {r['sweep_id']}  rows {r['n_rows']}")
 for m, e in r['members'].items():
     c = e['comparison']
     print(f"{m:5s} {e['result']:22s} n={e['n_pairs']:2d} raw_p={e['raw_p']:.3g} holm_p={e['adjusted_p']:.3g} "
