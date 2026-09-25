@@ -968,3 +968,415 @@ the changelog. README likewise.
 **Decided by**: PI, 2026-09-24, in the CP4b.1 instructions; implemented by the builder.
 
 ---
+
+## 2026-09-24: D017 — Supersession ledger for the tracked documents
+
+**Decision**: The tables below are the ledger of every passage in `docs/BUILD_SPEC.md`,
+`docs/METHODOLOGY.md`, `README.md` and `docs/MASTER_AUGMENTATION_PLAN_2026.md` that decisions
+D002–D016, D018 or D019 have overtaken. A row names the passage by section number and heading
+with its file:line at commit 8ed2df4 (the four documents are unchanged at CP5a), the superseding
+decision, and one of these statuses:
+- *superseded*: the passage stays as history and the decision governs; at CP5b it gains an
+  inline "Superseded by D0nn (see the table)" line under its heading and a row in BUILD_SPEC's
+  "Superseded passages" table (item F.1);
+- *fixed in place*: the text states a fact or an example that is wrong and is corrected at CP5b
+  (items F.1–F.5); only the passages F.1–F.5 list carry this status, because F.1 rewrites
+  nothing else;
+- *superseded; fixed in place (F.1)*: both, where F.1 lists the passage;
+- *open*: not yet in the document; the named item closes it.
+
+The heading keeps each row valid after the table added at the top of BUILD_SPEC shifts its later
+line numbers. BUILD_SPEC's authority line already defers to this file for past decisions, so the
+ledger is the record and the BUILD_SPEC table is a copy of it.
+
+**BUILD_SPEC.md**
+
+| Passage (section, heading, line at 8ed2df4) | Superseded by | Status |
+|---|---|---|
+| Table of contents, "11. Classical Baselines (ESN, RKS, GRU stub)" (:29) | D018 (the GRU stub is dropped) | superseded |
+| Table of contents, "16. Proof Layer: Manifest Schema v1.1" (:34), and the "v1.1" schema mentions at §4 Glossary (:187), §5.2 Target state (:241), §16 (:682), §16.2 (:688), §16.6 Migration (:725) and Appendix D (:1186) | D004 (schema 1.2), D013 (schema 1.4) | fixed in place (F.1: 1.4; a v1.2 changelog line is added, the document's own v1.1 changelog line at :1204 stays) |
+| §3.2 The Compute Bar, C2 "CPU-first" (:146); §6.3 Excluded dependencies, the GPU stack (:282) | D006 (GPU permitted, CPU float64 the reference) | superseded (D006's Supersedes line names only D001; see the inline table below) |
+| §4 Glossary, ϕ(x) with α = π as ASSUMED-DEFAULT 4.B (:176); Appendix A 4.B (:1039) and 9.A (:1046) | D011 (the encoding scale is a tuned hyperparameter over the registered grid; π is the untuned default only) | superseded |
+| §4 Glossary, \|ψ_t⟩ "see §9.2 for the stateful variant deferred to Phase 1.5" (:178); §28 MG4 — Stateful readout (:1022) | D003 (windowed input first, carried state later) | superseded |
+| §4 Glossary, MC over τ ∈ {0, …, τ_max} (:190); §8.1 Short-Term Memory, the primary metric MC (:354); §13.1 Primary metrics, STM(K) MC (:534) | D013 (`stm_memory` sums k ≥ 1; MC_0 is reported separately) | superseded |
+| §5.1 Current state, the layout lines naming `ablations.py` and `gru.py (stub)` (:221–222) | D010 (matched ablations in `reservoirs/windowed_qrc.py`), D018 (GRU dropped) | superseded |
+| §5.2 Target state, "`results/gates/<name>.json`: gate verdict files" (:243); §15 Decision Gates, the intro's `gate.spec.json`, `cli.py:gate_cmd` and `<name>.json` (:595); Appendix C §31.2 `results/gates/<name>.json` shape (:1116–1131) | D013 (the family record and its member views), D018 (timestamped legacy files with provenance keys) | superseded |
+| §7.2 Top-level schema (current): `gru` in `baseline.enabled`, `ridge_alpha` in `esn_grid`, `random_features` as an ablation name (:314–318) | D009 (no `ridge_alpha` in the ESN grid), D011 and D016 C9 (RKS is a baseline), D018 (GRU dropped) | fixed in place (F.1) |
+| §7.3 Default config: `baseline.enabled: [esn, random_features]` (:337) | D010 (`random_features` removed from `alpha_lite.yaml`'s enabled list), D011 and D016 C9 (RKS is enabled in `comparative.yaml` only) | fixed in place (F.1) |
+| §8.3 NARMA-10, "gated behind G3" (:378) | D013, D014 (NARMA-10 is G4's task, run in the family) | superseded |
+| §9.2 Time-locality of the readout (:404) | D003 (recorded inline at D003's "Relation to BUILD_SPEC"), D010 (the window enters through the input) | superseded |
+| §9.6 Circuit hash, the preimage `(n_qubits, depth, thetas, phis, readout)` (:436–438); §16.2's `circuit_hash` entry (:698) | D010 (the window and ablation suffixes), D011 (the encoding scale in every preimage, CP4b ruling 8) | superseded |
+| §10 Ablation Suite (8 axes), the module `reservoirs/ablations.py` (:444) | D010 (matched ablations live in `reservoirs/windowed_qrc.py`; the legacy module is a deprecated shim the referee deletes) | fixed in place (F.1) |
+| §10.1 Ablation axes, A1–A3 "Implemented in `extract_features_*`" (:448–452) and A4 random kitchen sinks as an ablation (:454) | D010 (matched ablations), D011 and D016 C9 (RKS is a tuned baseline under `baseline`) | fixed in place (F.1) |
+| §10.2 Self-falsifying ablations, `self_falsified` forcing G3 (:466); Appendix D, `self_falsified == false` (:1179) | D014 (G3 is a paired margin over the tuned ESN; no self-falsification clause) | superseded |
+| §11.1 Echo-state network (ESN) (:476) | D009 (dense wiring, one draw per seed, block validation), D011 (bias, matched budget, grid without `ridge_alpha`), D012 (washout) | superseded (D009 recorded this only inline) |
+| §11.2 Random kitchen sinks (RKS) (:487) | D011 (windowed, σ/√d, tuned under the matched budget), D016 C9 | superseded |
+| §11.3 GRU stub (:491); §22.2 Phase 1.5, "adds … the GRU baseline" (:871) | D018 (the stub is dropped) | superseded |
+| §12.1 Splits (:503) | D011 (validation blocks of the training rows), D012 (one washout) | superseded |
+| §12.4 Randomness handling, `default_rng(reservoir_seed + offset)` (:526); Appendix A 12.A (:1051) | D010 (`default_rng([reservoir_seed, tag])`) | superseded |
+| §13.4 Pre-registered effect sizes, the `gates` block and ΔMC over τ ∈ {0..K} (:551–557); Appendix B's "adds an explicit `gates` block" (:1106) | D013 (the `gates:` block removed; the family protocol in `configs/gates/`), D014 | superseded |
+| §13.5 Multiple-comparison correction, "a small, fixed family of three null hypotheses" (:559–561) | D013 (the registered family of five) | superseded |
+| §14.1 Bootstrap procedure, percentile / BCa resample counts (:571–573); Appendix A 13.A and 13.B (:1052–1053) | D013 (BCa with the registered resample count and seed) | superseded |
+| §14.2 Paired tests, Cohen's d (:575–577) | D013 (d_z) | superseded |
+| §14.3 Power analysis (pre-registered) (:579–581); Appendix E.9 Power analysis under realistic SDs (:1283–1297) | D013 (sided power at the registered pair count) | superseded |
+| §15 Decision Gates G0–G7 (:593): no G0.7 | D005, D008 (G0.7 v1) | open (F.1 adds §15's G0.7 v1 entry from `configs/gates/G0.7.v1.yaml`) |
+| §15.2 G0.5 — Backend cross-check: "at least three random triples", `results/gates/G0.5.json` (:606–611) | D010 (the registered cases at one tolerance), D011 (the scale cases), D018 (timestamped legacy gate files, B.5) | superseded; fixed in place (F.1) |
+| §15.3 G1 — STM separation (:613) | D013, D014 | superseded |
+| §15.4 G2 — Parity separation (:621) | D014 | superseded |
+| §15.5 G2.5 — Haar-random discrimination (:629) | D010 (matched Haar), D014 | superseded |
+| §15.6 G3 — Classical-baseline parity, "within 1 SE on at least one task" (:637–643) | D014 (recorded inline in D014's Supersedes block) | superseded; fixed in place (F.1 points it to D014) |
+| §15.7 G4 — NARMA-10 fitness (:645) | D014 | superseded |
+| §15.11 Gate exit codes, "a re-evaluation produces a new file `<name>.<timestamp>.json`" (:678) against §17 "G0, G0.5, G5–G7 write `results/gates/<name>.json`" (:738) | D018 (legacy gate files are timestamped and never overwritten; :678 wins) | fixed in place (F.1) |
+| §16 Proof Layer: Manifest Schema v1.1 and the §16.2 field list (:682–707) | D004 (measurement_model), D013 (schema 1.4: design, sweep_id, tuning_record_sha, secondary_metrics, budgets, device, precision) | superseded; fixed in place (F.1: the version strings and :702) |
+| §16.2 v1.1 fields, `backend_device` "PennyLane device string" (:702) | D009 (`numpy_esn` rows), D011 (`numpy_rks` rows) | fixed in place (F.1) |
+| §17 CLI Surface, `plot` (:739) and Appendix F.4 Generating figures (:1394) | — (`commands/plot.py` is a stub; no decision) | fixed in place (F.1 says so or drops the example) |
+| §17 CLI Surface (:729–740) and Appendix F — Operational Runbooks (:1342): `--seed` flags and a gate list without `family` | D010, D013, D016 | fixed in place (at 531f91f; recorded inline in D016) |
+| §18 Health Checks (G0), the required-package list with `pytest` and `reservoirpy` (:759) | D018 (test dependencies leave `source_health`) | fixed in place (F.1) |
+| §25 Differentiation vs. Prior Art, the published bar restated (:944) | D018 (REFERENCES pins 2510.25183 to v1 and is the one place for the bar) | fixed in place (F.1 points to REFERENCES) |
+| Appendix B — Example Configuration, the enabled list `esn, random_features` (:1086–1087) and `ridge_alpha` in `esn_grid` (:1092) | D010, D011 and D016 C9 (the enabled list), D009 (`ridge_alpha`) | fixed in place (F.1) |
+| Appendix E.6 The CV subtlety: block CV with a 200-step per-fold warmup, ASSUMED-DEFAULT E.A (:1252–1261) | D009 (recorded inline in D009's Supersedes block), D012 | superseded; fixed in place (F.1 points it to D009 and D012 and lists E.A in the Appendix A index) |
+| Appendix F.2 Running a development sweep, "in the CP4b report" (:1379–1380) | D019 (the CP4c sequence is the record) | fixed in place (F.1 replaces the pointer with the sequence) |
+
+**METHODOLOGY.md**
+
+| Passage | Superseded by | Status |
+|---|---|---|
+| §1.2 Temporal Parity / XOR, "Default: d ∈ {1, 2, 3, 5}" (:25) | D005 (the window-2 parity clause of G0.7 v1, `configs/gates/G0.7.v1.yaml:60`), D013 (`comparative.yaml` uses `parity_window` 3) | fixed in place (F.2) |
+| §1.3 NARMA-10 "(Phase 1.5, gated behind G3)" (:43) | D013, D014 (NARMA-10 is G4's task, run in the family) | fixed in place (F.2) |
+| §2.2 Tuning Grid, "`qrc-thresher tune TASK --config`" (:80) | D016 B6 (TASK is optional; one sweep id) | fixed in place (F.2) |
+| Missing sections: the measurement model, G0.7 v1, the per-member claims, the diagnostics, the ablation-task convention | D004 and D018; D005 and D008; D014; D011; D019 | open (F.2 adds them at CP5b) |
+
+**README.md**
+
+| Passage | Superseded by | Status |
+|---|---|---|
+| The framing under the title (:6–12) | D002 (a QRC workbench with the gates as its quality bar) | fixed in place (F.3) |
+| Installation (:14), the install command `uv pip sync uv.lock` (:27) | — (CI's command; the referee's test extra, D018) | fixed in place (F.3) |
+| Architecture, Key subsystems (:67, :77): `stateful_qrc` "memory-carrying", "persistent reservoir state" (:89–90) | D003 (carried state is design (b), not built), D018 (the module is classical smoothing, renamed `smoothed`) | fixed in place (F.3) |
+| Phase 1 Status (:92): "PennyLane QRC (angle encoding, ring entanglement, Pauli-Z readout)" (:96) | D010 (the windowed design) | fixed in place (F.3) |
+| Phase 1 Status: "Stateful QRC variant with carried reservoir state" (:97) | D003, D018 | fixed in place (F.3) |
+| Phase 1 Status: "ESN and random kitchen sinks baselines" (:98) | D009, D011 (RKS windowed, σ/√d, tuned, `comparative.yaml` only) | fixed in place (F.3) |
+| Phase 1 Status: "run manifests (schema v1.1)" (:102) | D004, D013 (schema 1.4) | fixed in place (F.3) |
+| Phase 1 Status: the CLI list (:104–105) | D013, D016, D018, D019 (`baseline`, `tune`, `gate` flags, `evidence`, `scorecard`; `plot` is a stub) | fixed in place (F.3) |
+| Phase 1 Status: "Pre-registered gate thresholds in config (`gates:` section)" (:109) | D013 (the `gates:` block was removed; thresholds live in `configs/gates/`) | fixed in place (F.3) |
+| Phase 1 Status: the gate evaluator list without G0.7 and `family` (:111) | D005, D013 | fixed in place (F.3) |
+| Phase 1 Status: "Full G1–G7 evaluations against benchmark sweeps" (:117) | D019 (run 4 and `docs/scorecard.md`) | fixed in place (F.3) |
+
+**docs/MASTER_AUGMENTATION_PLAN_2026.md**
+
+| Passage | Superseded by | Status |
+|---|---|---|
+| §1.1 Architecture Overview (:30), the GRU row of the technical-debt table (:76) | D018 (dropped; a GRU baseline is a later decision) | superseded (marked at CP5b, F.5) |
+| §7 Success Metrics, Phase 2.0 Completion Criteria (:474, :487): "Stateful reservoirs benchmarked on STM with carry-depth study" (:490) | D003 (carried state comes later), D018 (`stateful_qrc` is classical smoothing, not quantum memory) | superseded (marked at CP5b, F.5) |
+
+**docs/DECISIONS.md**
+
+| Passage | Superseded by | Status |
+|---|---|---|
+| D004, Measurement model, "Finite-shot measurement lands before any comparative sweep" (DECISIONS.md:93) | — (a commitment, not a supersession) | not met by run 4; open until the finite-shot v2 rerun (CP5a ruling 1, 2026-09-25) |
+
+**Supersessions that were written only inline, now recorded here**
+
+| Decision and where it is written | What it supersedes |
+|---|---|
+| D003, "Relation to BUILD_SPEC" (:75–79) | BUILD_SPEC §9.2 |
+| D006, the GPU rules (:143–156); its Supersedes line (:156) names only D001 | BUILD_SPEC's GPU passages (§3.2 C2, §6.3) |
+| D009, Supersedes (:271) | BUILD_SPEC Appendix E.6's 200-step warmup and §11.1 |
+| D011, the hash preimage paragraph (:555–559, CP4b ruling 8); missing from D011's Supersedes block (:597–600) | D010's w = 1 hash rule (`compute_circuit_hash(params)` alone at w = 1) |
+| D014, Supersedes (:820–822) | BUILD_SPEC §15.3–15.7 |
+| D016, "BUILD_SPEC drift" (:963–966) | BUILD_SPEC §17 and Appendix F |
+
+**Rulings applied but never annotated**: CP4b ruling 6 (the G0.5 scale power test: the scale
+cases of D011 are part of G0.5, `commands/gate.py` `G05_SCALE_CASES`, and
+`tests/test_g05_crosscheck.py` shows that a Qiskit side ignoring the scale fails every scale
+case) and CP4b ruling 11 (`configs/gates/COMPARATIVE.v1.yaml` may change only in its registration
+commit and is frozen after it; `tests/test_comparative_family.py` pins its canonical-JSON
+SHA-256).
+
+**The one ruled exception to append-only (CP5a ruling 2, 2026-09-25)**: the builder's CP4b
+implementation notes (D015) name a person twice on one line. Those two mentions are replaced by
+"the PI" in a commit of their own, made by the referee; no other past entry is edited, and this
+paragraph is the record of the exception.
+
+**Decided by**: PI, 2026-09-24, in the CP5 instructions (items marked (builder) proposed by the
+builder at CP5a).
+
+---
+
+## 2026-09-24: D018 — Smoothed rename, GRU drop, measurement labels, RKS status, reporting rules, the defect D19 note
+
+**Decision**:
+
+- **The stateful-to-smoothed rename (defect D2).** `reservoirs/stateful_qrc.py` implements no
+  quantum memory: each feature row is 0.5·base[t] + 0.5·mean(base[t − carry_depth : t + 1]) over
+  the memoryless features of `pennylane_qrc.extract_features`, which is classical smoothing of
+  the feature stream. It becomes `reservoirs/smoothed_qrc.py` with `extract_features_smoothed`,
+  bit-identical to `extract_features_stateful` (features and state trace), registered as plugin
+  `smoothed`. Nothing is deleted: `stateful_qrc.py` stays as a deprecated shim whose
+  `extract_features_stateful` and plugin `stateful` return identical values and warn with a
+  `DeprecationWarning` naming `extract_features_smoothed` on every call (not at import). The
+  docs say the module adds classical smoothing, not quantum memory. (builder, CP5a ruling 13)
+  The result class is `SmoothedQRCResult`; `StatefulQRCResult` is the same class, kept
+  importable from the shim. The `stateful` entry point in `pyproject.toml` is repointed or
+  dropped by the referee.
+- **The GRU drop (the rest of defect D20).** `gru` leaves `baseline.enabled`'s Literal, the
+  plugin registry and `commands/baseline.py`'s not-in-run-path table. `baselines/gru.py` is
+  deleted by the referee once the change lands. A GRU baseline, if wanted, is a later decision
+  with its own registration.
+- **The classical measurement label.** `MEASUREMENT_LABELS` gains
+  `classical: "classical, no measurement cost"`. It is a manifest and report value only:
+  `MeasurementConfig.model` stays `Literal['exact']`, and G0.7 v1 keeps `exact` by protocol.
+  ESN and RKS rows write `measurement_model = classical`; QRC and ablation rows keep the
+  config's `measurement.model`. The family's arm selection does not read `measurement_model`
+  and must not start to: run 4's classical rows say `exact` because they were written before
+  this decision, and they must still pair. The family record keeps `measurement_model` and
+  `measurement_label`, which describe the QRC arm and come from the config. Each member gains
+  per-arm labels as new keys only. (builder, CP5a ruling 8) The key is
+  `measurement_labels: {"a": <label>, "b": <label>}` on each member, where a is the QRC arm and
+  b the comparator, derived from each arm's kind and never from `measurement_model` (`baseline`
+  rows are classical; everything else carries the family's label). The scorecard labels a
+  classical comparator by its kind and footnotes that rows written before D018 recorded `exact`
+  on classical arms; the ESN presets' G0.7 rows show the classical label by kind, with a
+  footnote that G0.7 v1 records `exact` by protocol (CP5a ruling 14). For classical rows only,
+  this supersedes D004's "The only accepted value is `exact`".
+- **RKS status.** Settled by D011 and D016 C9: windowed, σ/√d, tuned under the matched budget, a
+  baseline under `baseline` and never an ablation. No new decision; README and BUILD_SPEC catch
+  up (D017).
+- **Test dependencies (S6, item D.4).** `proof/source_health.py` no longer requires `pytest` or
+  `reservoirpy`. The referee moves `pytest`, `ruff` and `reservoirpy` to a test extra in
+  `pyproject.toml` and CI (`uv sync --locked --extra test`). ReservoirPy is only a test
+  cross-reference of the numpy ESN.
+- **References (defect D7, S5, item F.4).** `docs/REFERENCES.md` pins 2510.25183 to v1, whose
+  NARMA-10 numbers are the published bar, and notes that v2 differs. It repositions 2602.03522
+  as an architectural neighbour whose method differs, adds 2607.09905 and 2607.18552, drops
+  ReservoirPy as the primary ESN reference, and marks every entry unverified until the referee
+  checks its abs page. BUILD_SPEC §25 points to REFERENCES instead of restating the bar.
+- **Reporting rules.**
+  - Every console line that prints a metric value or a verdict carries the measurement label
+    (`run`, `ablation`, `baseline`, `tune`, `gate family`, G0.5 and G0.7); once per block is
+    enough where a header line precedes per-row lines.
+  - Every gate JSON carries the git commit (with `-dirty` when the tree has changes), the
+    `config_hash` of the config used (or null with a `config_hash_reason`) and the measurement
+    model and label wherever a reservoir is evaluated. The legacy writer
+    (`commands/gate.py` `_write_gate_result`, used by G0, G0.5, G5, G6, G7) gains these keys and
+    `allow_nan=False`. (builder, CP5a ruling 6) Legacy gate files become timestamped
+    `<name>.<stamp>.json` written through one shared never-overwrite helper, which resolves
+    BUILD_SPEC §15.11 against §17 in favour of §15.11; the writer's signature stays backward
+    compatible (new arguments keyword-only and defaulted); the scorecard still reads the
+    unstamped form.
+  - (builder, CP5a ruling 7) Every G0.7 JSON written after this decision gains the top-level
+    keys `config_hash` (`run_manifest._config_hash` of the `--config` file) and
+    `git_commit_hash` (equal to `environment.git_commit_hash`). Its `environment` and
+    `model_details` blocks stay as they are; nothing is renamed or removed, and neither
+    `tests/test_gate_g07.py` nor `configs/gates/G0.7.v1.yaml` changes. The scorecard reads the
+    top-level keys and, for older files, falls back to `model_details.tuning_config_hash`
+    (shown as "(tuning config)") and `environment.git_commit_hash`.
+  - Figures carry the label in their footer, as the forgetting curve already does.
+  - (builder, CP5a ruling 12) New writers only: (a) the family and view writers, the G0.7
+    writer and the tuning writer open their files with LF line endings on every platform; (b)
+    `cli_command` records the basename of the interpreter or script (`Path(sys.argv[0]).name`)
+    plus the arguments, never the absolute program path; (c) a manifest's `config_path` is a
+    POSIX path relative to the repository root when the config lies under it, otherwise the path
+    as given. No recorded file changes.
+- **Key names.** New writers use `git_commit_hash`, as manifest rows and G0.7's `environment`
+  block do. The family record keeps `git_commit`, because renaming it would change a recorded
+  key (D019, R4). The scorecard reads both.
+- **The note on defect D19.** A seed-paired G3 with a BCa interval and d_z was recorded as done
+  outside the repository, but no branch had it before this refactor: main and the other origin
+  branches paired G3 by list position with a t-test and no BCa interval or d_z. It was
+  implemented fresh under decision D013 (`metrics/paired.py`).
+
+**Supersedes**: for classical rows only, D004's "The only accepted value is `exact` until the
+finite-shot path exists"; BUILD_SPEC §11.3 (GRU stub) and §17's `results/gates/<name>.json`
+naming for G0, G0.5, G5–G7 (D017 lists both); the README's description of `stateful_qrc` as a
+memory-carrying reservoir.
+
+**Consequences**: A classical row is recognisable by its label without reading `backend_device`.
+No threshold, metric, direction, floor or protocol file changes. The `stateful` plugin keeps
+working and warns; downstream users move to `smoothed`. Legacy gate JSONs accumulate like G0.7's
+and the family's do, and the newest stamp is the one a reader takes. Files written by the new
+writers hash the same on every platform; files recorded before this decision keep their bytes.
+
+**Rationale**: The `stateful` name claimed a carried quantum state that the code never had
+(defect D2); calling it smoothing is the plain description. The GRU stub was accepted into the
+baseline list without an implementation (defect D20); a list that names a model no command can
+run misleads a reader of the config. "exact (oracle upper bound)" on an ESN row says something
+false about the ESN, whose states are read exactly at no cost; the classical label says the true
+thing and keeps the QRC's oracle caveat visible beside it.
+
+**Decided by**: PI, 2026-09-24, in the CP5 instructions (items marked (builder) proposed by the
+builder at CP5a).
+
+---
+
+## 2026-09-24: D019 — The CP4c outcome (run 4) and the run-4 reporting fixes
+
+**Decision**:
+
+- **The registered evidence (ruling R1).** Run 4 is the registered CP4 evidence: one clean
+  sweep of the whole CP4c sequence, run in one go on commit 8ed2df4 (no `-dirty`) from
+  2026-09-24 21:45:18Z to 22:41:12Z, config `configs/comparative.yaml`
+  (`config_hash` 509b9d0be086f1a8d8ab8b7af4965c28dc79a1db686b4fdf1a940d5b821666cf, canonical
+  JSON), protocol COMPARATIVE.v1 (`protocol_sha256`
+  9a051a19edb3c08c79785076b0312671c8703a450cceada149bb52002d829e40, canonical JSON), sweep_id
+  20260924T214530147999Z, 12 seed pairs (42/137 + i), readout `z_only`, measurement `exact`
+  (oracle upper bound), every row successful, of schema 1.4, of this config and sweep (the count
+  is the family record's top-level `n_rows`). Its records:
+  - the family record `COMPARATIVE.v1.20260924T224106784228Z.json`, SHA-256
+    3da53714d0728d7d3d4276f0c1084c59fb1a3e3daf05eeb81539943c5ef85826, with the member views
+    G1, G2, G2.5, G3 and G4 at the same stamp, each carrying that SHA-256 as `family_sha256`;
+  - the G0.7 v1 evaluation of the tuned design,
+    `G0.7.tuned_qrc.20260924T224100291861Z.json`, SHA-256
+    5164fcd97bd63e36e8135b91fc9d802223310ba423fc77187f5e07fac72f0a8a, which equals the
+    family's `members.G1.g07.sha256`, with its forgetting-curve figure;
+  - the three tuning records `results/tuning/<config_hash>/{stm,parity,narma}.json`, each
+    self-verifying through `record_sha256`;
+  - the rows in `results/runs.csv`.
+  Verdicts, each with n_pairs = 12, m = 5, α = 0.05, decided by the Holm-adjusted one-sided
+  paired t: G1 FAIL, G2 PASS, G2.5 FAIL, G3 FAIL, G4 FAIL. Every other number is cited by
+  evidence file: the family record and the member views carry the means, mean differences,
+  BCa intervals, d_z, raw and adjusted p-values, floors and "baseline better" flags; the
+  scorecard and the docs generate their numbers from those files and never hand-copy a
+  statistic. The referee replicated the run independently: run 4 matches run 1 and the
+  earlier sandbox rows exactly on every row, and the family and G0.7 results of those runs
+  differ only in their provenance fields.
+- **The CP4c sequence.** The runbook (outside the repository) first archived
+  `results/runs.csv`, `results/experiments.db` and `results/tuning/<config_hash>/`, then ran on
+  the host, in this order:
+  ```
+  qrc-thresher tune --config configs/comparative.yaml
+  qrc-thresher run stm --config configs/comparative.yaml
+  qrc-thresher run parity --config configs/comparative.yaml
+  qrc-thresher run narma --config configs/comparative.yaml
+  qrc-thresher run parity --config configs/comparative.yaml --design-task stm
+  qrc-thresher run stm --config configs/comparative.yaml --design default
+  qrc-thresher run parity --config configs/comparative.yaml --design default
+  qrc-thresher run narma --config configs/comparative.yaml --design default
+  qrc-thresher ablation no_entangle stm --config configs/comparative.yaml
+  qrc-thresher ablation no_entangle parity --config configs/comparative.yaml --design-task stm
+  qrc-thresher ablation no_entangle stm --config configs/comparative.yaml --design default
+  qrc-thresher ablation no_entangle parity --config configs/comparative.yaml --design default
+  qrc-thresher ablation haar stm --config configs/comparative.yaml
+  qrc-thresher ablation haar stm --config configs/comparative.yaml --design default
+  qrc-thresher baseline stm --config configs/comparative.yaml
+  qrc-thresher baseline stm --config configs/comparative.yaml --design default
+  qrc-thresher baseline parity --config configs/comparative.yaml
+  qrc-thresher baseline parity --config configs/comparative.yaml --design default
+  qrc-thresher baseline narma --config configs/comparative.yaml
+  qrc-thresher baseline narma --config configs/comparative.yaml --design default
+  qrc-thresher gate G0.7 --config configs/alpha_lite.yaml --model tuned_qrc --tuning-config configs/comparative.yaml
+  qrc-thresher gate family --config configs/comparative.yaml
+  qrc-thresher summary --phase cp4c
+  ```
+- **Superseded runs.** The sandbox rows (commit unknown), run 1 (8ed2df4-dirty), run 2 (a
+  tune-only attempt on 8ed2df4 that stopped during `tune narma`, wrote no rows and no gate
+  files, and left partial stm and parity records) and run 3 (clean 8ed2df4; stopped on a
+  `PermissionError` raised by `os.replace` in `proof.run_manifest.update_cumulative_compute`,
+  then resumed by hand, which left exact duplicate rows) are archived on the host and never
+  cited. The sandbox rows, run 1, run 3 and run 4 gave the same verdicts; run 2 reached no
+  gate.
+- **Rulings.** R1 above. R2: no retry is added to `os.replace`; `update_cumulative_compute` is
+  not touched (no retry, no new `try`/`except`, no test change), because the error did not
+  recur in run 4 (the PI's ruling). R3: four reporting defects found in the CP4c runs are fixed
+  in CP5 (below); none may change a verdict, p-value, statistic, value or n that run 4
+  recorded. R4 (invariance): re-evaluating run 4's rows with the CP5 code must return every
+  recorded leaf of the family record exactly (verdicts, p-values, statistics, values and n);
+  only `git_commit` and `timestamp_utc` are exempt; new keys are allowed; no recorded key is
+  renamed or removed; the top-level `n_rows` is a recorded leaf that counts every successful row
+  of the config before any collapsing, exact in the re-derivation of run 4's rows as recorded,
+  while the tests that append rows of that config (evidence tests 4 and 5) exempt it and pin
+  its new value instead. A test enforces this on the committed evidence, under the environment
+  locked by `uv.lock` at 8ed2df4 (CP5a ruling 3: the evidence test fails, never skips, unless
+  numpy and scipy are the versions that lock pins, naming both and this decision). P4: the evidence is
+  committed under `docs/evidence/<short-commit>/` as byte-exact copies of every gate and family
+  JSON the scorecard cites, the tuning records behind the family and the config behind the
+  family (`configs/comparative.yaml`, copied byte-exact), beside `docs/scorecard.md`.
+  `configs/` is frozen for all of CP5.
+- **The fixes (R3).**
+  - A.1: `_mean_report` (the `default_w1` table) and `_mc_k0_mean` (G3's reported `mc_k0`)
+    averaged every row they were given, so run 3's duplicates were counted twice. Both now take
+    one row per pair through the public helper `metrics.paired.collapse_exact_reruns`, which is
+    `metrics.paired._collapse` renamed (D016 B6 names the old name; D016 is not edited). Rows of
+    one pair collapse only when both `circuit_hash` and value are equal, the registered
+    `duplicate_rule` of COMPARATIVE.v1; the row kept is the one with the smallest `str(run_id)`,
+    so the choice never depends on row order (inside the family the canonical sort ends in
+    `run_id`, so it is the same row as before); any other duplicate is refused with the existing
+    text. The `default_w1` table keeps its keys and its bit-identical mean and std, and gains
+    `status`, `reason`, `n_rows_in`, `pairs`, `run_ids` and `circuit_hashes`; it never raises.
+  - A.2: `PairedComparison` gains `run_ids_a`, `run_ids_b` (one list per pair), `circuit_hashes_a`,
+    `circuit_hashes_b` (one hash per pair) and `run_ids` (the sorted distinct union), filled
+    only when the status is OK, so every comparison of the family JSON names its rows and the
+    pyproject and plugin wrappers no longer return an empty list.
+  - A.3: `summary` pooled different deployments, because every ablation deployment is written
+    as design `inherited`. `gates/comparative.py`, the one place for row selectors (CP4b ruling
+    2), gains `resolve_config` (the verified tuning records and config of a `config_hash`) and
+    `deployment_label` (the deployment of a row, read from its `circuit_hash` against the
+    deploying record's design and the two defaults, never from `cli_command` and never by
+    searching other tasks' designs). `summary` groups by (config_hash, sweep_id, task_name,
+    design, deployment, primary_metric_name), takes one row per pair through the helper, and
+    prints the columns task_name, kind, model, task, design, deployment, metric, config, sweep_id,
+    n_rows, n, mean, std. Its table function is callable in process without writing a file.
+  - A.4: an ablation row's task lives only in `primary_metric_name`. `task_names.task_of_metric`
+    (the inverse of `TASK_METRICS`, a bijection) gives `summary` its task column; METHODOLOGY and
+    README state the convention. Ablation task: no schema field in v1; deferred to a future
+    schema and protocol, because COMPARATIVE.v1 is frozen with `primary_metric_name` as the
+    discriminator and run 4's rows must stay valid inputs.
+  - A.6: one reader, `gates.comparative.read_runs_csv`, used by the family, `summary` and the
+    tests, with the parse pinned: `keep_default_na=False`; `dtype` str for `sweep_id`,
+    `tuning_record_sha`, `circuit_hash` and `config_hash`; `na_values` for
+    `primary_metric_value` alone so that an empty value (a failed row) reads as NaN and the
+    column stays float64 whatever other rows the file holds; pandas' default float parser with
+    no `float_precision`.
+  - (builder, CP5a ruling 5) Failed rows keep their task: a failed ablation or baseline row
+    writes `primary_metric_name` = its task's metric (`task_names.task_metric`) and an empty
+    value, instead of an empty name. Run 4 has no failed rows, so nothing recorded changes.
+- **The one-row-per-pair rule.** The `default_w1` and `mc_k0` tables follow the registered
+  `duplicate_rule` (COMPARATIVE.v1.yaml `pairing.duplicate_rule`): exact reruns collapse to one
+  row per pair, anything else is refused for that table only, and a refused table is reported
+  as INSUFFICIENT_EVIDENCE naming the pairs while the member's verdict is untouched.
+- **Deployment labels.** A QRC row with design `default` or `default_w1`, and any row with an
+  empty `sweep_id`, is labelled by its design; a baseline row `tuned` or `default`; a tuned QRC
+  row `tuned:design_<t>` where t is the task whose record deployed it (kept only if its hash is
+  that design's for the pair); an inherited ablation row `inherited:<parent>` where the parent
+  is whichever of design_<t> (the deploying record's task), `default` and `default_w1` has the
+  matching ablated hash for the pair, joined with `=` only when more than one matches; anything
+  else `<design>:unresolved`. Task names are parsed only through `task_names.parse_task_name`.
+- **The reader and the float parser (disclosure).** pandas' default float parser reads some
+  metric strings one unit in the last place away from the correctly rounded double, and a
+  correctly rounded parse would change recorded statistics (among them a Wilcoxon statistic and
+  its p-value in the run-4 record) without changing any verdict, adjusted p or n. v1 keeps the
+  parser that produced the record, pinned so that no unrelated row can switch it; a correctly
+  rounded parse, with ties detected on the rounded |d|, belongs to a future protocol version.
+  One consequence: every row export copies metric strings as text, never through a float.
+- **Platform note (R4, disclosure).** The Haar ablation's `circuit_hash` is the SHA-256 of the
+  unitary bytes drawn by `scipy.stats.unitary_group`, so it depends on the numpy and scipy build.
+  Under the environment locked by `uv.lock` at 8ed2df4 every Haar row of run 4 resolves to its
+  parent; under a newer numpy and scipy none does, and G2.5 would become INSUFFICIENT_EVIDENCE.
+  Exactness is therefore required under that locked environment, and a difference on another
+  platform is a stop for a PI ruling, never a reason to loosen a comparison. A build-independent
+  Haar identity belongs to the v2 protocol (CP5a ruling 3).
+
+**Supersedes**: nothing registered. D016 B6's name `metrics.paired._collapse` is superseded by
+`collapse_exact_reruns` (same rule, public, order-independent choice of the kept row); D016 is
+not edited.
+
+**Consequences**: The CP4 verdicts are fixed at run 4 and the evidence is reproducible from the
+committed folder alone. Any CP5 code change that moves a recorded leaf is a stop, not a fix. On
+run 4's rows the `summary` table gives every deployment its own group and leaves none
+unresolved, as evidence test 6 checks; every comparison of the family JSON now names its rows.
+Run 4 stands as the registered CP4 evidence of COMPARATIVE.v1 under the exact model, an oracle
+upper bound and never a headline claim; it does not meet D004's "Finite-shot measurement lands
+before any comparative sweep", and D004 is not amended: a finite-shot rerun follows under a v2
+protocol, registered in its own decision and commit before that sweep, and CP5 builds nothing
+for it (CP5a ruling 1, 2026-09-25; D017 carries the ledger row).
+
+**Rationale**: Run 4 is the only run that was clean, complete and done in one go on a clean
+commit; citing one run, and keeping the others archived, is what makes the evidence
+reproducible. The reporting fixes are made invariant by construction (one row per pair only
+where a table previously averaged duplicates; new keys only) so that the record stays the
+record.
+
+**Decided by**: PI, 2026-09-24, in the CP5 instructions (items marked (builder) proposed by the
+builder at CP5a).
+
+---
