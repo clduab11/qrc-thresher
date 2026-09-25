@@ -568,3 +568,182 @@ class TestGateCommand:
         assert 'INSUFFICIENT_EVIDENCE' in result.output
         assert 'tuning' in result.output.lower()
         assert not (tmp_path / 'results' / 'gates' / f'{name}.json').exists()
+
+
+# --- CP5 (docs/DECISIONS.md D019, items A.1 and A.2): the tables name their rows ----------------
+
+def _rows_by_id(runs: pd.DataFrame) -> dict:
+    return {str(r['run_id']): r for _, r in runs.iterrows()}
+
+
+def _check_names_rows(table: dict, by_id: dict) -> None:
+    """Every run_id named for pair i is a row of that pair with the named hash and value."""
+    assert table['status'] == 'OK', table.get('reason')
+    pairs = [tuple(p) for p in table['pairs']]
+    assert len(table['run_ids_a']) == len(table['run_ids_b']) == len(pairs)
+    for side in ('a', 'b'):
+        for i, pair in enumerate(pairs):
+            ids = table[f'run_ids_{side}'][i]
+            assert ids and ids == sorted(ids)
+            for rid in ids:
+                row = by_id[rid]
+                assert (int(row['task_seed']), int(row['reservoir_seed'])) == pair
+                assert str(row['circuit_hash']) == table[f'circuit_hashes_{side}'][i]
+                assert float(row['primary_metric_value']) == table[f'values_{side}'][i]
+    union = sorted({rid for side in ('a', 'b') for ids in table[f'run_ids_{side}'] for rid in ids})
+    assert table['run_ids'] == union
+
+
+class TestTablesNameTheirRows:
+    def test_every_comparison_and_the_default_w1_table_name_their_rows(self, family) -> None:
+        by_id = _rows_by_id(family['runs'])
+        for m in MEMBERS:
+            member = family['result']['members'][m]
+            _check_names_rows(member['comparison'], by_id)
+            _check_names_rows(member['default'], by_id)
+            w1 = member['default_w1']
+            assert w1['status'] == 'OK' and w1['reason'] is None
+            assert w1['n_rows'] == w1['n_rows_in'] == 12 and len(w1['pairs']) == 12
+            values = []
+            for i, pair in enumerate(w1['pairs']):
+                (rid,) = w1['run_ids'][i]
+                row = by_id[rid]
+                assert (int(row['task_seed']), int(row['reservoir_seed'])) == tuple(pair)
+                assert str(row['circuit_hash']) == w1['circuit_hashes'][i]
+                values.append(float(row['primary_metric_value']))
+            assert w1['mean'] == float(pd.Series(values).mean())
+            assert w1['std'] == float(pd.Series(values).std(ddof=1))
+        beside = family['result']['members']['G1']['reported']['stm_memory_margin_over_no_entangle']
+        _check_names_rows(beside, by_id)
+
+    def test_an_exact_rerun_of_a_default_w1_row_collapses(self, family) -> None:
+        runs = family['runs']
+        base = family['result']['members']['G3']['default_w1']
+        picked = runs[(runs['task_name'] == 'stm') & (runs['design'] == 'default_w1')
+                      & (runs['task_seed'] == 44)]
+        assert len(picked) == 1
+        rerun = picked.copy()
+        rerun['run_id'] = 'rerun-explicit-id'
+        result = _evaluate(pd.concat([runs, rerun], ignore_index=True))
+        for m in ('G2.5', 'G3'):
+            w1 = result['members'][m]['default_w1']
+            assert (w1['status'], w1['n_rows'], w1['n_rows_in']) == ('OK', 12, 13)
+            assert w1['mean'] == base['mean'] and w1['std'] == base['std']
+            i = w1['pairs'].index([44, 139])
+            assert w1['run_ids'][i] == sorted([str(picked.iloc[0]['run_id']), 'rerun-explicit-id'])
+        assert result['n_rows'] == len(runs) + 1  # the top-level count is before collapsing
+
+    def test_a_differing_duplicate_refuses_only_its_table(self, family) -> None:
+        runs, base = family['runs'], family['result']
+        picked = runs[(runs['task_name'] == 'stm') & (runs['design'] == 'default_w1')
+                      & (runs['task_seed'] == 44)].copy()
+        picked['primary_metric_value'] = picked['primary_metric_value'] + 1e-6
+        picked['run_id'] = 'differing-duplicate'
+        result = _evaluate(pd.concat([runs, picked], ignore_index=True))
+        for m in MEMBERS:
+            member, before = result['members'][m], base['members'][m]
+            for key in ('result', 'raw_p', 'adjusted_p', 'comparison', 'default', 'floor',
+                        'baseline_better', 'message'):
+                assert member[key] == before[key], (m, key)
+            w1 = member['default_w1']
+            if m in ('G2.5', 'G3'):
+                assert w1['status'] == 'INSUFFICIENT_EVIDENCE' and '(44, 139)' in w1['reason']
+                assert w1['n_rows'] == 0 and w1['mean'] is None and w1['std'] is None
+                assert w1['n_rows_in'] == 13
+                assert w1['pairs'] == w1['run_ids'] == w1['circuit_hashes'] == []
+                json.dumps(w1, allow_nan=False)
+            else:
+                assert w1 == before['default_w1']
+
+    def test_mc_k0_is_unchanged_by_an_exact_rerun_of_a_tuned_stm_row(self, family) -> None:
+        # The picked row and its exact copy carry a distinctive mc_k0, so a 13-row mean would
+        # differ from the 12-row mean by far more than rounding (TF3).
+        runs = family['runs'].copy()
+        picked = (runs['task_name'] == 'stm') & (runs['design'] == 'tuned') \
+            & (runs['task_seed'] == 45)
+        assert picked.sum() == 1
+        secondary = json.loads(runs.loc[picked, 'secondary_metrics'].iloc[0])
+        secondary['mc_k0'] = 5.0
+        runs.loc[picked, 'secondary_metrics'] = json.dumps(secondary)
+        rerun = runs[picked].copy()
+        rerun['run_id'] = 'rerun-tuned-stm'
+        by_pair = {}
+        for _, r in runs[(runs['task_name'] == 'stm') & (runs['design'] == 'tuned')].iterrows():
+            by_pair[(int(r['task_seed']), int(r['reservoir_seed']))] = json.loads(
+                r['secondary_metrics'])['mc_k0']
+        expected = [by_pair[p] for p in sorted(by_pair)]  # 12 collapsed rows, ascending pairs
+        assert len(expected) == 12
+        expected_mean = float(sum(expected) / len(expected))
+        assert abs(expected_mean - (sum(expected) + 5.0) / 13) > 0.1  # the 13-row mean differs
+        result = _evaluate(pd.concat([runs, rerun], ignore_index=True))
+        g3 = result['members']['G3']
+        assert g3['result'] == 'PASS' and g3['n_pairs'] == 12
+        assert g3['reported']['mc_k0']['qrc'] == expected_mean
+        assert g3['reported']['mc_k0']['esn'] == family['result']['members']['G3']['reported'][
+            'mc_k0']['esn']
+        i = g3['comparison']['pairs'].index([45, 140])
+        original = str(runs.loc[picked, 'run_id'].iloc[0])
+        assert g3['comparison']['run_ids_a'][i] == sorted([original, 'rerun-tuned-stm'])
+
+    def test_family_member_returns_the_comparison_run_ids(self, family, monkeypatch) -> None:
+        from qrc_thresher.commands import gate
+        from qrc_thresher.gates import comparative
+
+        monkeypatch.setattr(comparative, 'evaluate_config',
+                            lambda *args, **kwargs: (family['result'], None))
+        verdict, member, run_ids = gate._family_member('G3', None)
+        assert verdict == 'PASS' and member['gate'] == 'G3'
+        assert len(run_ids) == 24 and run_ids == sorted(set(run_ids))
+        assert run_ids == family['result']['members']['G3']['comparison']['run_ids']
+
+    def test_classical_on_the_baseline_arm_gives_the_same_statistics(self, family) -> None:
+        # A green guard (D018): the arm selection never reads measurement_model, so run 4's
+        # classical rows, which say 'exact', pair exactly as relabelled rows would.
+        runs, base = family['runs'], family['result']
+        relabelled = runs.copy()
+        is_classical = relabelled['task_name'].str.startswith(('esn', 'rks'))
+        relabelled.loc[is_classical, 'measurement_model'] = 'classical'
+        result = _evaluate(relabelled)
+        for m in MEMBERS:
+            for key in ('result', 'raw_p', 'adjusted_p', 'comparison', 'default', 'default_w1'):
+                assert result['members'][m][key] == base['members'][m][key], (m, key)
+        assert result['measurement_label'] == 'exact (oracle upper bound)'
+
+    def test_each_member_names_its_arms_labels_by_kind(self, family) -> None:
+        # D018 (CP5a ruling 8): measurement_labels = {'a': the QRC arm, 'b': the comparator},
+        # derived from the arm's kind, never from measurement_model; a new key only.
+        exact, classical = 'exact (oracle upper bound)', 'classical, no measurement cost'
+        members = family['result']['members']
+        for m in ('G2', 'G3', 'G4'):
+            assert members[m]['measurement_labels'] == {'a': exact, 'b': classical}, m
+        for m in ('G1', 'G2.5'):
+            assert members[m]['measurement_labels'] == {'a': exact, 'b': exact}, m
+        assert family['result']['measurement_label'] == exact  # the family's own label
+
+    def test_an_empty_arm_gives_the_documented_default_w1_fields(self) -> None:
+        # A.1: an empty arm reports INSUFFICIENT_EVIDENCE with reason 'no rows' and the pinned
+        # key order; :438 (n_rows 0) is left as it is.
+        bare = _evaluate(_sweep(with_defaults=False))
+        for m in MEMBERS:
+            w1 = bare['members'][m]['default_w1']
+            assert list(w1) == ['design', 'task_name', 'n_rows', 'mean', 'std', 'status',
+                                'reason', 'n_rows_in', 'pairs', 'run_ids', 'circuit_hashes']
+            assert (w1['status'], w1['reason']) == ('INSUFFICIENT_EVIDENCE', 'no rows')
+            assert w1['n_rows'] == 0 and w1['n_rows_in'] == 0
+            assert w1['mean'] is None and w1['std'] is None
+            assert w1['pairs'] == w1['run_ids'] == w1['circuit_hashes'] == []
+
+    def test_the_default_w1_key_order_is_pinned(self, family) -> None:
+        for m in MEMBERS:
+            w1 = family['result']['members'][m]['default_w1']
+            assert list(w1) == ['design', 'task_name', 'n_rows', 'mean', 'std', 'status',
+                                'reason', 'n_rows_in', 'pairs', 'run_ids', 'circuit_hashes']
+
+    def test_the_family_and_view_writers_use_lf_line_endings(self, tmp_path, family) -> None:
+        # D018 (CP5a ruling 12a): new writers only; files recorded before D018 keep their bytes.
+        fam = _family()
+        paths = fam.write_family_report(family['result'], tmp_path)
+        for key, path in paths.items():
+            raw = path.read_bytes()
+            assert b'\r' not in raw, key
+            assert raw.endswith(b'}') or raw.endswith(b'}\n')

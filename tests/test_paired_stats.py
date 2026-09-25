@@ -317,3 +317,73 @@ class TestCompareArms:
         assert c.p_one_sided == pytest.approx(float(
             scipy_stats.ttest_rel(c.values_a, c.values_b, alternative='less').pvalue
         ))
+
+
+# --- CP5 (docs/DECISIONS.md D019, items A.1 and A.2): every comparison names its rows ------------
+
+NEW_FIELDS = ('run_ids_a', 'run_ids_b', 'circuit_hashes_a', 'circuit_hashes_b', 'run_ids')
+
+
+def _by_pair(arm: pd.DataFrame, column: str) -> dict:
+    return {(int(r['task_seed']), int(r['reservoir_seed'])): r[column] for _, r in arm.iterrows()}
+
+
+class TestComparisonsNameTheirRows:
+    def test_per_pair_run_ids_and_hashes_come_in_pair_order(self) -> None:
+        a, b = _arms()
+        c = _compare(a, b)
+        d = _dict(c)
+        assert c.status == 'OK'
+        ids_a, ids_b = _by_pair(a, 'run_id'), _by_pair(b, 'run_id')
+        hashes_a, hashes_b = _by_pair(a, 'circuit_hash'), _by_pair(b, 'circuit_hash')
+        pairs = [tuple(p) for p in d['pairs']]
+        assert pairs == PAIRS
+        assert d['run_ids_a'] == [[ids_a[p]] for p in pairs]
+        assert d['run_ids_b'] == [[ids_b[p]] for p in pairs]
+        assert d['circuit_hashes_a'] == [hashes_a[p] for p in pairs]
+        assert d['circuit_hashes_b'] == [hashes_b[p] for p in pairs]
+        union = sorted(set(ids_a.values()) | set(ids_b.values()))
+        assert d['run_ids'] == union and len(d['run_ids']) == 24
+
+    def test_an_exact_rerun_with_a_distinct_run_id_lists_both_ids_and_keeps_the_smallest(self):
+        a, b = _arms()
+        base = _dict(_compare(a, b))
+        rerun = a.iloc[[3]].copy()  # pair (45, 140), same circuit_hash and value
+        rerun['run_id'] = 'zzz-rerun'
+        first, second = pd.concat([a, rerun], ignore_index=True), pd.concat([rerun, a],
+                                                                            ignore_index=True)
+        c1, c2 = _dict(_compare(first, b)), _dict(_compare(second, b))
+        assert c1 == c2  # whichever row comes first
+        original = str(a.iloc[3]['run_id'])
+        assert c1['run_ids_a'][3] == sorted([original, 'zzz-rerun'])
+        assert 'zzz-rerun' in c1['run_ids'] and original in c1['run_ids']
+        # The statistics are those of the collapsed arm, and the kept row is the smallest id.
+        for key in ('mean_a', 'mean_b', 'mean_diff', 'p_one_sided', 'ci_low', 'ci_high', 'd_z',
+                    'wilcoxon_statistic', 'values_a', 'values_b', 'n_pairs'):
+            assert c1[key] == base[key], key
+        assert c1['circuit_hashes_a'] == base['circuit_hashes_a']
+        assert base['run_ids_a'][3] == [original] and min(original, 'zzz-rerun') == original
+
+    def test_collapse_exact_reruns_is_public_and_order_independent(self) -> None:
+        paired = _paired()
+        a, _ = _arms()
+        rerun = a.iloc[[3]].copy()
+        rerun['run_id'] = '000-first'  # sorts before the content-derived id
+        rows, run_ids, reason = paired.collapse_exact_reruns(pd.concat([a, rerun]), 'A')
+        assert reason is None and set(rows) == set(PAIRS)
+        assert str(rows[(45, 140)]['run_id']) == '000-first'  # the smallest str(run_id) is kept
+        assert run_ids[(45, 140)] == sorted(['000-first', str(a.iloc[3]['run_id'])])
+        assert all(len(run_ids[p]) == 1 for p in PAIRS if p != (45, 140))
+        rows2, run_ids2, _ = paired.collapse_exact_reruns(pd.concat([rerun, a]), 'A')
+        assert str(rows2[(45, 140)]['run_id']) == '000-first' and run_ids2 == run_ids
+        differing = a.iloc[[3]].copy()
+        differing['primary_metric_value'] = differing['primary_metric_value'] + 1e-6
+        rows3, run_ids3, reason3 = paired.collapse_exact_reruns(pd.concat([a, differing]), 'A')
+        assert rows3 is None and '(45, 140)' in reason3 and 'exact rerun' in reason3
+
+    def test_an_insufficient_comparison_has_the_five_new_fields_empty(self) -> None:
+        a, b = _arms()
+        c = _dict(_compare(a, b[b['task_seed'] != 47]))
+        assert c['status'] == 'INSUFFICIENT_EVIDENCE'
+        for key in NEW_FIELDS:
+            assert c[key] == [], key
