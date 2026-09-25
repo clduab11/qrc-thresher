@@ -843,7 +843,7 @@ proposed by the builder at CP4a). D014 is frozen once committed.
 
 **Decision**: The choices below were made by the builder while making the CP4a tests green.
 None changes a threshold, a metric, a direction, a floor or the protocol file; each is listed
-so Chris can reverse it. Items Chris rejects are to be reverted before the CP4b commits land.
+so the PI can reverse it. Items the PI rejects are to be reverted before the CP4b commits land.
 
 - Sweep ids are per tuning record. `tune TASK` stamps its own `sweep_id`, so a config has three
   records and three stamps. A row inherits the stamp (and `tuning_record_sha`) of the record it
