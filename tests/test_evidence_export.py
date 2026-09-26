@@ -370,6 +370,70 @@ class TestRefusals:
         self._refused(tree, 'cli_command')
 
 
+class TestCp5b1Refusals:
+    """The CP5b.1 exporter fixes (CP5b ruling 3; items C9, C10, C11, C13) and the sha bindings."""
+
+    def _refused(self, tree, match, **kwargs):
+        TestRefusals._refused(self, tree, match, **kwargs)
+
+    def test_an_edited_g07_file_is_refused_by_the_family_sha(self, tree) -> None:
+        data = json.loads(tree['g07'].read_text(encoding='utf-8'))
+        data['result'] = 'FAIL'
+        tree['g07'].write_text(json.dumps(data, indent=2), encoding='utf-8')
+        self._refused(tree, 'g07.sha256', gate_jsons=[tree['paths']['family']])
+
+    def test_a_tuning_record_edited_without_recomputing_is_refused(self, tree) -> None:
+        path = tree['root'] / 'results' / 'tuning' / tree['config_hash'] / 'stm.json'
+        record = json.loads(path.read_text(encoding='utf-8'))
+        record['qrc'] = {'edited': True}
+        path.write_text(json.dumps(record, indent=2), encoding='utf-8')
+        self._refused(tree, 'does not recompute')
+
+    def test_a_tuning_record_edited_and_recomputed_is_refused(self, tree) -> None:
+        from qrc_thresher.tuning import record_sha256
+
+        path = tree['root'] / 'results' / 'tuning' / tree['config_hash'] / 'stm.json'
+        record = json.loads(path.read_text(encoding='utf-8'))
+        record['qrc'] = {'edited': True}
+        record.pop('record_sha256')
+        record['record_sha256'] = record_sha256(record)
+        path.write_text(json.dumps(record, indent=2), encoding='utf-8')
+        self._refused(tree, 'differs from the family')
+
+    def test_a_family_only_export_with_the_g07_figure_missing_is_refused(self, tree) -> None:
+        tree['figure'].unlink()  # C9
+        self._refused(tree, 'figure', gate_jsons=[tree['paths']['family']])
+
+    def test_a_g07_only_export_has_the_generic_mapping_and_no_row_sections(self, tree) -> None:
+        target = _export(tree, gate_jsons=[tree['g07']], runs_csv=None)  # C10
+        text = (target / 'README.md').read_text(encoding='utf-8')
+        assert text.count('| `results/gates/<X>` | `<X>` |') == 1
+        assert 'Dropped row columns' not in text and 'CP4c' not in text
+        assert (target / tree['g07'].name).exists() and (target / tree['figure'].name).exists()
+        _no_staging_left(tree)
+
+    def test_a_g0_file_is_refused(self, tree) -> None:
+        g0 = tree['root'] / 'results' / 'gates' / 'G0.20260923T120000000000Z.json'
+        g0.write_text(json.dumps({'gate': 'G0', 'result': 'PASS', 'evidence': {},
+                                  'git_commit_hash': COMMIT}, indent=2), encoding='utf-8')
+        self._refused(tree, r'E\.1', gate_jsons=[g0])  # C13 (N8)
+
+    def test_an_explicit_config_that_does_not_exist_is_refused(self, tree) -> None:
+        self._refused(tree, 'not a file', config_path=tree['root'] / 'configs' / 'absent.yaml')
+
+    def test_write_manifest_orders_case_insensitively_by_path_parts(self, tmp_path) -> None:
+        ev = _evidence()  # C11: the committed order on every platform
+        folder = tmp_path / 'folder'
+        for rel in ('G0.7.x.json', 'configs/c.yaml', 'B.json', 'COMPARATIVE.v1.x.json', 'a/x.json'):
+            (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+            (folder / rel).write_text(rel, encoding='utf-8')
+        entries = ev.write_manifest(folder)
+        listed = [line.split('  ', 1)[1] for line in
+                  (folder / 'MANIFEST.sha256').read_text(encoding='utf-8').splitlines()]
+        assert listed == list(entries) == ['a/x.json', 'B.json', 'COMPARATIVE.v1.x.json',
+                                           'configs/c.yaml', 'G0.7.x.json']
+
+
 class TestCli:
     def test_the_evidence_command(self, tree, monkeypatch) -> None:
         from click.testing import CliRunner

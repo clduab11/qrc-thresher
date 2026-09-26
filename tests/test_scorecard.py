@@ -227,6 +227,10 @@ class TestScorecard:
                     'adjusted_p'):
             assert _g(NUMBERS[key]) in numbers, key
         assert 'Holm' in numbers and 'd_z' in numbers
+        assert f"mean A {_g(NUMBERS['mean_a'])} vs B {_g(NUMBERS['mean_b'])}" in numbers
+        assert f"[BCa 95% {_g(NUMBERS['ci_low'])}, {_g(NUMBERS['ci_high'])}]" in numbers
+        assert (f"raw p {_g(NUMBERS['p_one_sided'])}; "
+                f"Holm p {_g(NUMBERS['adjusted_p'])}") in numbers
         assert 'floor' in numbers.lower()
         assert re.search(r'(?<![\d.])0\.7(?!\d)', numbers)  # the floor's own value, standalone
         assert 'baseline better' not in numbers
@@ -282,7 +286,7 @@ class TestScorecard:
         folder = _folder(tmp_path, 'abc1234', g07s=[
             ('pennylane_qrc', 'alpha_lite_phase1', 'FAIL', older, True),
             ('pennylane_qrc', 'alpha_lite_phase1', 'PASS', newer, True),
-            ('pennylane_qrc', 'windowed_w2', 'FAIL', older, True),
+            ('pennylane_qrc', 'windowed_w2', 'FAIL', '20260923T090000000000Z', True),
             ('esn_linear', 'alpha_lite_phase1', 'FAIL', older, True),
         ])
         rows = _table_rows(sc.build_scorecard([folder], tmp_path / 'docs'))['G0.7']
@@ -352,6 +356,103 @@ class TestScorecard:
         assert rows['G0.5'][0][2] == 'PASS' and rows['G0.7'][0][2] == 'FAIL'
         for m in MEMBERS:
             assert rows[m][0][2] == 'missing'
+
+
+class TestCp5b1:
+    """The CP5b.1 fixes (CP5b rulings 3, 13; items C1, C14, C17-C21)."""
+
+    def test_a_family_without_measurement_labels_is_labelled_by_kind(self, tmp_path) -> None:
+        sc = _scorecard()  # C1: written before CP5, labelled through comparative.arm_labels
+        fname, record = _family(RESULTS)
+        for member in record['members'].values():
+            del member['measurement_labels']
+        folder = _folder(tmp_path, 'abc1234', family=(fname, record))
+        rows = _table_rows(sc.build_scorecard([folder], tmp_path / 'docs'))
+        for gate in ('G2', 'G3', 'G4'):
+            assert rows[gate][0][4] == f'a: {EXACT}; b: {CLASSICAL}', gate
+            assert rows[gate][1][4] == f'a: {EXACT}; b: {CLASSICAL}', gate  # the default row too
+        for gate in ('G1', 'G2.5'):
+            assert rows[gate][0][4] == EXACT, gate
+
+    def test_the_newest_stamp_wins_across_folders_in_either_order(self, tmp_path) -> None:
+        sc = _scorecard()
+        older, newer = '20260923T100000000000Z', '20260923T110000000000Z'
+        flipped = {**RESULTS, 'G2': 'FAIL'}
+        first = _folder(tmp_path, 'aaa1111', family=_family(RESULTS, stamp=newer), stamp=newer,
+                        g07s=[('tuned_qrc', 'comparative', 'PASS', newer, True)],
+                        legacy=[('G0.5', 'PASS', newer)])
+        second = _folder(tmp_path, 'bbb2222', family=_family(flipped, stamp=older), stamp=older,
+                         g07s=[('tuned_qrc', 'comparative', 'FAIL', older, True)],
+                         legacy=[('G0.5', 'FAIL', older)])
+        for order in ([first, second], [second, first]):
+            rows = _table_rows(sc.build_scorecard(order, tmp_path / 'docs'))
+            assert rows['G2'][0][2] == 'PASS' and newer in rows['G2'][0][7]
+            assert len([r for r in rows['G2'] if 'default-design' not in r[1]]) == 1
+            assert rows['G0.7'][0][2] == 'PASS' and newer in rows['G0.7'][0][3]
+            assert rows['G0.5'][0][2] == 'PASS' and newer in rows['G0.5'][0][7]
+
+    def test_an_absolute_folder_gives_the_same_bytes_as_the_relative_one(self, tmp_path,
+                                                                          monkeypatch) -> None:
+        sc = _scorecard()  # C14
+        folder = _folder(tmp_path, 'abc1234', family=_family(RESULTS))
+        absolute = sc.build_scorecard([folder.resolve()], (tmp_path / 'docs').resolve())
+        monkeypatch.chdir(tmp_path)
+        relative = sc.build_scorecard([Path('docs') / 'evidence' / 'abc1234'], Path('docs'))
+        assert absolute == relative
+        rows = _table_rows(relative)
+        assert rows['G2'][0][7].startswith('evidence/abc1234/')
+
+    def test_a_view_that_disagrees_with_its_family_is_refused(self, tmp_path) -> None:
+        sc = _scorecard()  # C20
+        folder = _folder(tmp_path, 'abc1234', family=_family(RESULTS))
+        view = folder / f'G3.{STAMP}.json'
+        data = json.loads(view.read_text(encoding='utf-8'))
+        data['result'] = 'PASS'
+        view.write_text(json.dumps(data, indent=2), encoding='utf-8')
+        _write_manifest(folder)  # the folder is consistent with its manifest, not with itself
+        with pytest.raises(sc.EvidenceError, match=re.escape(view.name) + '.*disagrees.*result'):
+            sc.build_scorecard([folder], tmp_path / 'docs')
+
+    def test_two_families_with_different_config_hashes_both_render(self, tmp_path) -> None:
+        sc = _scorecard()  # C19, CP5b ruling 13
+        other_hash = hashlib.sha256(b'another scorecard config').hexdigest()
+        fname, record = _family({**RESULTS, 'G2': 'FAIL'})
+        record['config_hash'] = other_hash
+        a = _folder(tmp_path, 'aaa1111', family=_family(RESULTS))
+        b = _folder(tmp_path, 'bbb2222', family=(fname, record))
+        rows = _table_rows(sc.build_scorecard([a, b], tmp_path / 'docs'))
+        gated = [r for r in rows['G2'] if 'default-design' not in r[1]]
+        assert len(gated) == 2 and len(rows['G2']) == 4
+        assert {r[6] for r in gated} == {CONFIG_HASH[:8], other_hash[:8]}
+        assert {r[2] for r in gated} == {'PASS', 'FAIL'}
+        assert [r[6] for r in gated] == sorted(r[6] for r in gated)  # ordered by config hash
+
+    def test_a_dirty_commit_is_refused(self, tmp_path) -> None:
+        sc = _scorecard()  # C21
+        fname, record = _family(RESULTS, commit=COMMIT_FAMILY + '-dirty')
+        folder = _folder(tmp_path, 'abc1234', family=(fname, record))
+        with pytest.raises(sc.EvidenceError, match=re.escape(fname) + '.*dirty'):
+            sc.build_scorecard([folder], tmp_path / 'docs')
+
+    def test_a_refused_default_w1_renders_its_status(self, tmp_path) -> None:
+        sc = _scorecard()  # C18
+        fname, record = _family(RESULTS)
+        record['members']['G3']['default_w1'] = {
+            'design': 'default_w1', 'task_name': 'stm', 'n_rows': 0, 'mean': None, 'std': None,
+            'status': 'INSUFFICIENT_EVIDENCE', 'reason': 'differing copies of pair (42, 137)',
+            'n_rows_in': 13}
+        folder = _folder(tmp_path, 'abc1234', family=(fname, record))
+        rows = _table_rows(sc.build_scorecard([folder], tmp_path / 'docs'))
+        default = rows['G3'][1]
+        assert 'default_w1 INSUFFICIENT_EVIDENCE: differing copies of pair (42, 137)' in default[3]
+        assert 'default_w1 mean' not in default[3]
+
+    def test_the_default_row_has_no_verdict(self, tmp_path) -> None:
+        sc = _scorecard()  # C17
+        folder = _folder(tmp_path, 'abc1234', family=_family(RESULTS))
+        rows = _table_rows(sc.build_scorecard([folder], tmp_path / 'docs'))
+        assert rows['G2'][1][2] == 'reported only (no verdict)'
+        assert rows['G4'][1][2] == 'reported only (no verdict)'  # the member is INSUFFICIENT
 
 
 class TestCli:

@@ -10,8 +10,10 @@ Commands:
   plugins  - List registered plugins.
   perf     - Run lightweight performance benchmarks.
   noise-sweep - Run noise model scaffold sweep.
-  plot     - Generate figures for a run.
+  plot     - A stub: writes no figures yet.
   summary  - Aggregate run history into a markdown report.
+  evidence - Export gate records byte-exact to docs/evidence/<short-commit>/ (D019).
+  scorecard - Generate docs/scorecard.md from the evidence folders (D019).
 """
 
 from __future__ import annotations
@@ -35,6 +37,8 @@ from qrc_thresher.commands import (
     summary_handler,
 )
 from qrc_thresher.commands.gate import FAMILY_NAMES
+from qrc_thresher.proof.evidence import evidence_handler
+from qrc_thresher.proof.scorecard import scorecard_handler
 
 logger = logging.getLogger('qrc_thresher')
 
@@ -220,7 +224,8 @@ def gate_cmd(name: str, config_path: Optional[str], model: str, tuning_config: s
         1 = FAIL
         2 = INSUFFICIENT_EVIDENCE (not enough data to decide)
 
-    G0, G0.5, G5, G6 and G7 write results/gates/<name>.json. G0.7 (memory sanity,
+    G0, G0.5, G5, G6 and G7 write a new timestamped results/gates/<name>.<stamp>.json on every
+    evaluation, never overwriting (D018). G0.7 (memory sanity,
     pre-registered in configs/gates/G0.7.v1.yaml) writes a new timestamped JSON and
     forgetting-curve figure on every evaluation. `family` (and any member G1, G2, G2.5, G3, G4)
     evaluates the comparative family of configs/gates/COMPARATIVE.v1.yaml as a unit on the
@@ -242,7 +247,7 @@ def gate_cmd(name: str, config_path: Optional[str], model: str, tuning_config: s
 @click.argument('run_id')
 @click.option('--out', 'out_path', default=None, help='Output directory.')
 def plot_cmd(run_id: str, out_path: Optional[str]) -> None:
-    """Generate figures for a run."""
+    """A stub: writes no figures yet."""
     sys.exit(plot_handler(run_id, out_path))
 
 
@@ -253,6 +258,29 @@ def plot_cmd(run_id: str, out_path: Optional[str]) -> None:
 def summary_cmd(phase: str, config_path: Optional[str]) -> None:
     """Aggregate run history into a markdown report, one row per deployment (D019)."""
     sys.exit(summary_handler(phase, config_path))
+
+
+@cli.command('evidence')
+@click.argument('gate_jsons', nargs=-1, required=True)
+@click.option('--config', 'config_path', default=None,
+              help='The config behind the family (else the tuning records\' own config_path).')
+@click.option('--runs-csv', 'runs_csv', default=None,
+              help='Export the rows of the family\'s config and sweep from this runs.csv.')
+@click.option('--out-root', 'out_root', default='docs/evidence', show_default=True)
+@click.option('--results-dir', 'results_dir', default='results', show_default=True)
+def evidence_cmd(gate_jsons, config_path: Optional[str], runs_csv: Optional[str],
+                 out_root: str, results_dir: str) -> None:
+    """Export gate records byte-exact to OUT_ROOT/<short-commit>/ (D019, ruling P4)."""
+    sys.exit(evidence_handler(list(gate_jsons), config_path, runs_csv, out_root, results_dir))
+
+
+@cli.command('scorecard')
+@click.option('--evidence', 'evidence', multiple=True,
+              help='Evidence folder(s); default: every docs/evidence/*/ folder.')
+@click.option('--out', 'out', default=None, help='Output path (default docs/scorecard.md).')
+def scorecard_cmd(evidence, out: Optional[str]) -> None:
+    """Generate the plain-language scorecard from the evidence folders (D019)."""
+    sys.exit(scorecard_handler(list(evidence), out))
 
 
 @cli.command('plugins')
