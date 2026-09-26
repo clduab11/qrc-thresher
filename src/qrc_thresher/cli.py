@@ -248,9 +248,11 @@ def plot_cmd(run_id: str, out_path: Optional[str]) -> None:
 
 @cli.command('summary')
 @click.option('--phase', default='phase1', show_default=True)
-def summary_cmd(phase: str) -> None:
-    """Aggregate run history into a markdown report."""
-    sys.exit(summary_handler(phase))
+@click.option('--config', 'config_path', default=None,
+              help='Config file to resolve the tuned deployments (else the tuning records\' own).')
+def summary_cmd(phase: str, config_path: Optional[str]) -> None:
+    """Aggregate run history into a markdown report, one row per deployment (D019)."""
+    sys.exit(summary_handler(phase, config_path))
 
 
 @cli.command('plugins')

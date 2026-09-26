@@ -2,7 +2,8 @@
 
 - QRC rows carry the task: 'stm', 'parity', 'narma'.
 - Matched ablations carry 'ablation:<name>'; their task is read from primary_metric_name
-  (``task_metric``), which is part of the same suffix debt.
+  (``task_metric`` / ``task_of_metric``), which is part of the same suffix debt. No schema field
+  in v1: deferred to a future schema and protocol (D019, item A.4).
 - Baseline rows carry the model and, except for STM (D009's names), the task: 'esn',
   'esn_parity', 'esn_narma', 'rks', 'rks_parity', 'rks_narma'.
 
@@ -25,6 +26,15 @@ def task_metric(task: str) -> str:
     """The primary metric name of a task's rows (ablation rows are told apart by it)."""
     _check_task(task)
     return TASK_METRICS[task]
+
+
+def task_of_metric(metric: str) -> Optional[str]:
+    """The task whose rows carry ``metric`` (the inverse of TASK_METRICS, a bijection; D019
+    item A.4), or None for an unknown metric. Ablation rows are labelled with it."""
+    for task, name in TASK_METRICS.items():
+        if name == metric:
+            return task
+    return None
 
 
 def qrc_task_name(task: str) -> str:
@@ -84,4 +94,5 @@ __all__ = [
     'parse_task_name',
     'qrc_task_name',
     'task_metric',
+    'task_of_metric',
 ]
