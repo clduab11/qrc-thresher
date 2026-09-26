@@ -7,6 +7,13 @@
 
 ---
 
+> **Status note (2026-09-26).** This plan is a 2026-05 document kept as history in full. Decisions
+> D002–D020 in `docs/DECISIONS.md` govern wherever they and this plan disagree (D020). The D017 ledger
+> lists the two passages the CP5 instructions named, and they are marked below (§1.1, the GRU row of
+> the technical-debt table; §7, Phase 2.0 criterion 2, stateful reservoirs). Nothing else in this file
+> was rewritten.
+
+
 ## EXECUTIVE SUMMARY
 
 The qrc-thresher codebase represents an exemplary **scientific prototype**: mathematically precise, determinism-first, with a well-documented methodology (850+ line BUILD_SPEC). However, it exhibits classic Phase-1 technical debt that blocks Phase 1.5 gate completion and threatens long-term reproducibility.
@@ -73,7 +80,7 @@ YAML Config → Pydantic → CLI (God module) → Sequential pipeline:
 | TD-011 | CI health check `continue-on-error` | P1 | 1h | Remove; fix underlying failures |
 | TD-012 | Single Python version in CI (3.11 only) | P2 | 2h | Add 3.12, 3.13 to matrix |
 | TD-013 | Plot command no-op | P3 | 6h | Wire up `viz/plots.py` |
-| TD-014 | GRU stub `NotImplementedError` | P2 | 12h | Implement (Phase 2) |
+| TD-014 | GRU stub `NotImplementedError` — *superseded by D018 (see the D017 ledger): the stub is dropped, a GRU baseline is a later decision* | P2 | 12h | Implement (Phase 2) |
 | TD-015 | No parallel execution | P1 | 12h | Process pool with progress bar |
 | TD-016 | Type hints gaps | P2 | 6h | Run `mypy --strict` on key modules |
 | TD-017 | No timeout/retry logic | P2 | 8h | Add `--timeout` and retry wrapper |
@@ -487,7 +494,7 @@ Cache key = `hash(serialized(inputs) + code_hash)`; invalidated on git commit ch
 ### Phase 2.0 Completion Criteria
 
 1. ✅ **Plugin SDK published** — external plugin example passes CI
-2. ✅ **Stateful reservoirs** benchmarked on STM with carry-depth study
+2. ✅ **Stateful reservoirs** benchmarked on STM with carry-depth study — *Superseded by D003 and D018 (see the D017 ledger): `stateful_qrc` is classical smoothing, renamed `smoothed_qrc`; a reservoir with carried quantum state is design (b), not built.*
 3. ✅ **Hardware backends** connected (IBM Quantum, AWS Braket) with calibration data ingest
 4. ✅ **Advanced gates** G6/G7 implemented and documented
 5. ✅ **Results DB** query API used by dashboard prototype

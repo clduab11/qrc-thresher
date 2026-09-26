@@ -12,9 +12,66 @@
 **Intended audience:** (1) the engineering team executing Phase 1; (2) an external reviewer at a NeurIPS QML workshop or *Quantum* journal who wants to reproduce the experiments; (3) future maintainers of subsequent phases.
 **Conventions:** All sections use the keywords MUST, SHOULD, MAY in the RFC 2119 sense. Anything labeled `ASSUMED-DEFAULT` is a defensible default chosen in the absence of an explicit upstream decision; Appendix A consolidates every such default for review.
 
+**Superseded passages (D017, D020):** the rows below copy the BUILD_SPEC tables of the supersession ledger in `docs/DECISIONS.md` (D017, and D020's addendum after it); that ledger is the record and this table its copy. Line numbers are those of commit 8ed2df4, before this table was added; the section number and heading keep each row valid. A passage marked *superseded* stays as history and carries an inline "Superseded by D0nn (see the table)" line under its heading; one marked *fixed in place* was corrected at CP5b unless its row names an earlier commit; *open* means not yet in the document when D017 was written, and the named item closes it.
+
+| Passage (section, heading, line at 8ed2df4) | Superseded by | Status |
+|---|---|---|
+| Table of contents, "11. Classical Baselines (ESN, RKS, GRU stub)" (:29) | D018 (the GRU stub is dropped) | superseded |
+| Table of contents, "16. Proof Layer: Manifest Schema v1.1" (:34), and the "v1.1" schema mentions at §4 Glossary (:187), §5.2 Target state (:241), §16 (:682), §16.2 (:688), §16.6 Migration (:725) and Appendix D (:1186) | D004 (schema 1.2), D013 (schema 1.4) | fixed in place (F.1: 1.4; a v1.2 changelog line is added, the document's own v1.1 changelog line at :1204 stays) |
+| §3.2 The Compute Bar, C2 "CPU-first" (:146); §6.3 Excluded dependencies, the GPU stack (:282) | D006 (GPU permitted, CPU float64 the reference) | superseded (D006's Supersedes line names only D001; see the inline table below) |
+| §4 Glossary, ϕ(x) with α = π as ASSUMED-DEFAULT 4.B (:176); Appendix A 4.B (:1039) and 9.A (:1046) | D011 (the encoding scale is a tuned hyperparameter over the registered grid; π is the untuned default only) | superseded |
+| §4 Glossary, \|ψ_t⟩ "see §9.2 for the stateful variant deferred to Phase 1.5" (:178); §28 MG4 — Stateful readout (:1022) | D003 (windowed input first, carried state later) | superseded |
+| §4 Glossary, MC over τ ∈ {0, …, τ_max} (:190); §8.1 Short-Term Memory, the primary metric MC (:354); §13.1 Primary metrics, STM(K) MC (:534) | D013 (`stm_memory` sums k ≥ 1; MC_0 is reported separately) | superseded |
+| §5.1 Current state, the layout lines naming `ablations.py` and `gru.py (stub)` (:221–222) | D010 (matched ablations in `reservoirs/windowed_qrc.py`), D018 (GRU dropped) | superseded |
+| §5.2 Target state, "`results/gates/<name>.json`: gate verdict files" (:243); §15 Decision Gates, the intro's `gate.spec.json`, `cli.py:gate_cmd` and `<name>.json` (:595); Appendix C §31.2 `results/gates/<name>.json` shape (:1116–1131) | D013 (the family record and its member views), D018 (timestamped legacy files with provenance keys) | superseded |
+| §7.2 Top-level schema (current): `gru` in `baseline.enabled`, `ridge_alpha` in `esn_grid`, `random_features` as an ablation name (:314–318) | D009 (no `ridge_alpha` in the ESN grid), D011 and D016 C9 (RKS is a baseline), D018 (GRU dropped) | fixed in place (F.1) |
+| §7.3 Default config: `baseline.enabled: [esn, random_features]` (:337) | D010 (`random_features` removed from `alpha_lite.yaml`'s enabled list), D011 and D016 C9 (RKS is enabled in `comparative.yaml` only) | fixed in place (F.1) |
+| §8.3 NARMA-10, "gated behind G3" (:378) | D013, D014 (NARMA-10 is G4's task, run in the family) | superseded |
+| §9.2 Time-locality of the readout (:404) | D003 (recorded inline at D003's "Relation to BUILD_SPEC"), D010 (the window enters through the input) | superseded |
+| §9.6 Circuit hash, the preimage `(n_qubits, depth, thetas, phis, readout)` (:436–438); §16.2's `circuit_hash` entry (:698) | D010 (the window and ablation suffixes), D011 (the encoding scale in every preimage, CP4b ruling 8) | superseded |
+| §10 Ablation Suite (8 axes), the module `reservoirs/ablations.py` (:444) | D010 (matched ablations live in `reservoirs/windowed_qrc.py`; the legacy module is a deprecated shim the referee deletes) | fixed in place (F.1) |
+| §10.1 Ablation axes, A1–A3 "Implemented in `extract_features_*`" (:448–452) and A4 random kitchen sinks as an ablation (:454) | D010 (matched ablations), D011 and D016 C9 (RKS is a tuned baseline under `baseline`) | fixed in place (F.1) |
+| §10.2 Self-falsifying ablations, `self_falsified` forcing G3 (:466); Appendix D, `self_falsified == false` (:1179) | D014 (G3 is a paired margin over the tuned ESN; no self-falsification clause) | superseded |
+| §11.1 Echo-state network (ESN) (:476) | D009 (dense wiring, one draw per seed, block validation), D011 (bias, matched budget, grid without `ridge_alpha`), D012 (washout) | superseded (D009 recorded this only inline) |
+| §11.2 Random kitchen sinks (RKS) (:487) | D011 (windowed, σ/√d, tuned under the matched budget), D016 C9 | superseded |
+| §11.3 GRU stub (:491); §22.2 Phase 1.5, "adds … the GRU baseline" (:871) | D018 (the stub is dropped) | superseded |
+| §12.1 Splits (:503) | D011 (validation blocks of the training rows), D012 (one washout) | superseded |
+| §12.4 Randomness handling, `default_rng(reservoir_seed + offset)` (:526); Appendix A 12.A (:1051) | D010 (`default_rng([reservoir_seed, tag])`) | superseded |
+| §13.4 Pre-registered effect sizes, the `gates` block and ΔMC over τ ∈ {0..K} (:551–557); Appendix B's "adds an explicit `gates` block" (:1106) | D013 (the `gates:` block removed; the family protocol in `configs/gates/`), D014 | superseded |
+| §13.5 Multiple-comparison correction, "a small, fixed family of three null hypotheses" (:559–561) | D013 (the registered family of five) | superseded |
+| §14.1 Bootstrap procedure, percentile / BCa resample counts (:571–573); Appendix A 13.A and 13.B (:1052–1053) | D013 (BCa with the registered resample count and seed) | superseded |
+| §14.2 Paired tests, Cohen's d (:575–577) | D013 (d_z) | superseded |
+| §14.3 Power analysis (pre-registered) (:579–581); Appendix E.9 Power analysis under realistic SDs (:1283–1297) | D013 (sided power at the registered pair count) | superseded |
+| §15 Decision Gates G0–G7 (:593): no G0.7 | D005, D008 (G0.7 v1) | open (F.1 adds §15's G0.7 v1 entry from `configs/gates/G0.7.v1.yaml`) |
+| §15.2 G0.5 — Backend cross-check: "at least three random triples", `results/gates/G0.5.json` (:606–611) | D010 (the registered cases at one tolerance), D011 (the scale cases), D018 (timestamped legacy gate files, B.5) | superseded; fixed in place (F.1) |
+| §15.3 G1 — STM separation (:613) | D013, D014 | superseded |
+| §15.4 G2 — Parity separation (:621) | D014 | superseded |
+| §15.5 G2.5 — Haar-random discrimination (:629) | D010 (matched Haar), D014 | superseded |
+| §15.6 G3 — Classical-baseline parity, "within 1 SE on at least one task" (:637–643) | D014 (recorded inline in D014's Supersedes block) | superseded; fixed in place (F.1 points it to D014) |
+| §15.7 G4 — NARMA-10 fitness (:645) | D014 | superseded |
+| §15.11 Gate exit codes, "a re-evaluation produces a new file `<name>.<timestamp>.json`" (:678) against §17 "G0, G0.5, G5–G7 write `results/gates/<name>.json`" (:738) | D018 (legacy gate files are timestamped and never overwritten; :678 wins) | fixed in place (F.1) |
+| §16 Proof Layer: Manifest Schema v1.1 and the §16.2 field list (:682–707) | D004 (measurement_model), D013 (schema 1.4: design, sweep_id, tuning_record_sha, secondary_metrics, budgets, device, precision) | superseded; fixed in place (F.1: the version strings and :702) |
+| §16.2 v1.1 fields, `backend_device` "PennyLane device string" (:702) | D009 (`numpy_esn` rows), D011 (`numpy_rks` rows) | fixed in place (F.1) |
+| §17 CLI Surface, `plot` (:739) and Appendix F.4 Generating figures (:1394) | — (`commands/plot.py` is a stub; no decision) | fixed in place (F.1 says so or drops the example) |
+| §17 CLI Surface (:729–740) and Appendix F — Operational Runbooks (:1342): `--seed` flags and a gate list without `family` | D010, D013, D016 | fixed in place (at 531f91f; recorded inline in D016) |
+| §18 Health Checks (G0), the required-package list with `pytest` and `reservoirpy` (:759) | D018 (test dependencies leave `source_health`) | fixed in place (F.1) |
+| §25 Differentiation vs. Prior Art, the published bar restated (:944) | D018 (REFERENCES pins 2510.25183 to v1 and is the one place for the bar) | fixed in place (F.1 points to REFERENCES) |
+| Appendix B — Example Configuration, the enabled list `esn, random_features` (:1086–1087) and `ridge_alpha` in `esn_grid` (:1092) | D010, D011 and D016 C9 (the enabled list), D009 (`ridge_alpha`) | fixed in place (F.1) |
+| Appendix E.6 The CV subtlety: block CV with a 200-step per-fold warmup, ASSUMED-DEFAULT E.A (:1252–1261) | D009 (recorded inline in D009's Supersedes block), D012 | superseded; fixed in place (F.1 points it to D009 and D012 and lists E.A in the Appendix A index) |
+| Appendix F.2 Running a development sweep, "in the CP4b report" (:1379–1380) | D019 (the CP4c sequence is the record) | fixed in place (F.1 replaces the pointer with the sequence) |
+| §7.2 Top-level schema (current), a listing without `measurement`, `reservoir.window`, `reservoir.encoding_scale`, `training.washout` and `tuning` (:298) | D004 (measurement), D010 and D011 (window, encoding scale, tuning), D012 (washout) | superseded |
+| §9.3 Implementation backends, "the `qrc-thresher gate G5` evaluator … for at least three random seeds across the (n, L) grid" (:415) | D010, D011 (G0.5 runs the registered cases at one tolerance) | superseded |
+| §15.8 G5 — Full-circuit cross-check, `results/gates/G5.json` (:658); §15.9 G6 — Phase 2 readiness, `results/gates/G6.json` (:664); §15.10 G7 — Hardware readiness, `results/gates/G7.json` (:670) | D018 (legacy gate files are timestamped and never overwritten) | superseded |
+| §19.1 The five-line reproduction, `qrc-thresher gate G1` without `--config` (:769–779) | D013, D014, D016 C9 (the family is evaluated as a unit and needs an explicit `--config`; Appendix F.2 carries the CP4c sequence) | superseded |
+| §25 Differentiation vs. Prior Art, the "Closest competitor" paragraph and "self-falsifying gates (G2.5), and signed manifests have no peer" (:942) | D014 (no self-falsification clause), D018 (QRC-Lab is an architectural neighbour; `docs/REFERENCES.md`) | superseded |
+| Appendix E.8 Holm vs. Bonferroni vs. BH-FDR, "a small, fixed family of three null hypotheses" (:1277) | D013 (the registered family of five) | superseded |
+| Appendix F.6 Adding a new ablation axis, `reservoirs/ablations.py` and `cli.py:ablation_cmd` (:1413–1414) | D010 (matched ablations in `reservoirs/windowed_qrc.py`) | superseded |
+
 ---
 
 ## Table of Contents
+
+*Superseded by D018 (see the table): entry 11's GRU stub is dropped.*
 
 1. Mission and Scientific Question
 2. Falsification-First Methodology
@@ -31,7 +88,7 @@
 13. Metrics and Their Estimators
 14. Statistical Methodology
 15. Decision Gates G0–G7
-16. Proof Layer: Manifest Schema v1.1
+16. Proof Layer: Manifest Schema 1.4
 17. CLI Surface
 18. Health Checks (G0)
 19. Reproducibility Contract
@@ -141,6 +198,8 @@ H5. **No verbal hedging.** A result is one of: `pass`, `fail`, `inconclusive`. D
 
 ### 3.2 The Compute Bar
 
+*Superseded by D006 (see the table).*
+
 C1. **Workstation-first.** Phase 1 MUST be completable on a single workstation with 16 GB RAM, 8 logical cores, and no GPU, within 24 wall-clock hours per full sweep at n ≤ 10 and shots ≤ 8192. If the budget is exceeded, the qubit ceiling is lowered or the shot count reduced (with corresponding documentation in DECISIONS.md), not the seed count.
 
 C2. **CPU-first.** No CUDA, cuQuantum, JAX-GPU, TPU, or any other accelerator path in Phase 1. The harness MUST run on a generic Linux/macOS laptop without device-specific drivers.
@@ -170,6 +229,8 @@ S4. Python ≥ 3.11 only.
 
 ## 4. Glossary and Notation
 
+*Superseded by D011 (ϕ, 4.B), D003 (|ψ_t⟩) and D013 (MC) (see the table).*
+
 - **n** — number of qubits in the reservoir.
 - **L** (or **d**) — number of layers (depth) in the hardware-efficient ansatz.
 - **θ** — frozen rotation angles, sampled per reservoir realization from a fixed distribution (default `Uniform[0, 2π]`; ASSUMED-DEFAULT 4.A).
@@ -184,7 +245,7 @@ S4. Python ≥ 3.11 only.
 - **Run** — a single (config, seed, RR) triple producing one row in `results/runs.csv`.
 - **Sweep** — a Cartesian product of runs over a configuration's varied axes.
 - **Gate** — a binary verdict (`pass`/`fail`/`inconclusive`) computed from a sweep's `runs.csv` and a `gate.spec.json`.
-- **Manifest** — a JSON object describing the inputs, outputs, environment, and gate verdicts of a sweep. Schema v1.1 (§16).
+- **Manifest** — a JSON object describing the inputs, outputs, environment, and gate verdicts of a sweep. Schema 1.4 (§16).
 - **NMSE** — normalized mean-squared error: `mean((y - ŷ)^2) / var(y)`.
 - **NRMSE** — normalized root mean-squared error: `sqrt(MSE) / std(y)`. The default error metric in this repo (matches `metrics/scoring.py`).
 - **MC** — memory capacity in the Jaeger sense: `MC = Σ_τ corr(y_t, ŷ_t)^2` over `STM(τ)` for τ ∈ {0, …, τ_max}.
@@ -198,6 +259,8 @@ ASSUMED-DEFAULT (4.C): Internal notation is consistent with `docs/METHODOLOGY.md
 ## 5. Repository Layout
 
 ### 5.1 Current state (Phase 1.0 scaffold)
+
+*Superseded by D010 and D018 (see the table).*
 
 ```
 qrc-thresher/
@@ -236,9 +299,11 @@ qrc-thresher/
 
 ### 5.2 Target state at end of Phase 1
 
+*Superseded by D013 and D018 (see the table).*
+
 The above layout is preserved verbatim. Phase 1 introduces:
 
-- `results/runs.csv`: append-only manifest log (schema v1.1).
+- `results/runs.csv`: append-only manifest log (schema 1.4).
 - `results/cumulative_compute.json`: atomic compute counter.
 - `results/gates/<name>.json`: gate verdict files.
 - `results/figures/<run_id>/`: per-run figure outputs.
@@ -278,6 +343,8 @@ ASSUMED-DEFAULT (5.A): The `results/` directory is partially git-tracked (small 
 
 ### 6.3 Excluded dependencies (Phase 1)
 
+*Superseded by D006 (see the table).*
+
 - No `torch`, `tensorflow`, `jax` (deep-learning frameworks).
 - No `cuda`, `cupy`, `nvidia-*` (GPU stack).
 - No `transformers`, `langchain`, `openai`, `anthropic`, `cohere` (LLM stack).
@@ -297,6 +364,8 @@ YAML, validated by a `pydantic` v2 model at load time (`src/qrc_thresher/config.
 
 ### 7.2 Top-level schema (current)
 
+*Superseded by D004, D010, D011 and D012 (see the table; D020's addendum): `measurement`, `reservoir.window`, `reservoir.encoding_scale`, `training.washout` and `tuning` are missing from the listing.*
+
 ```yaml
 experiment_name: <str>
 task:
@@ -311,11 +380,11 @@ reservoir:
   depth: <int, 1..10>
   readout: <"z_only" | "z_and_zz">
 baseline:
-  enabled: [<"esn" | "random_features" | "gru">, ...]
-  esn_grid: { spectral_radius, input_scaling, leak_rate, ridge_alpha }
+  enabled: [<"esn" | "random_features">, ...]   # the GRU stub was dropped (D018)
+  esn_grid: { spectral_radius, input_scaling, leak_rate }   # no ridge_alpha (D009); absent with a tuning block (D011)
   rks_dim: <int | null>
 ablation:
-  name: <"phase_random" | "no_entangle" | "random_features" | "haar"> # optional
+  name: <"phase_random" | "no_entangle" | "haar"> # optional; RKS is a baseline (D011)
 training:
   ridge_alphas: [<float>, ...]
   cv_folds: <int, 2..10>
@@ -334,7 +403,7 @@ Phase 1's default sweep is intentionally lean (workstation-friendly):
 
 - `reservoir.n_qubits: 4`, `reservoir.depth: 3`, `reservoir.readout: z_only`.
 - `task.length: 500`, `task.train_frac: 0.7`, `task.delay_max: 20`, `task.parity_window: 3`.
-- `baseline.enabled: [esn, random_features]`.
+- `baseline.enabled: [esn]` (RKS is enabled in `configs/comparative.yaml` only, D011).
 - `seeds.n_seeds: 3` for development; manuscript-track sweeps MUST use `n_seeds ≥ 5`.
 
 ### 7.4 Configuration immutability
@@ -346,6 +415,8 @@ A config that has been used to produce a *gated* manifest is immutable. Editing 
 ## 8. Tasks
 
 ### 8.1 Short-Term Memory (STM)
+
+*Superseded by D013 (see the table): `stm_memory` sums k ≥ 1.*
 
 **Definition.** Given an i.i.d. stream `u_t ∼ Uniform[-1, 1]`, the system is asked to output `y_t^{(k)} = u_{t-k}` for k ∈ {0, …, K}.
 
@@ -368,6 +439,8 @@ A config that has been used to produce a *gated* manifest is immutable. Editing 
 **Sequence length.** Same as STM. ASSUMED-DEFAULT (8.B). Implementation: `src/qrc_thresher/tasks/temporal_parity.py`.
 
 ### 8.3 NARMA-10
+
+*Superseded by D013 and D014 (see the table): NARMA-10 is G4's task.*
 
 **Definition.** Recurrence `y_{t+1} = 0.3 y_t + 0.05 y_t (Σ_{i=0}^{9} y_{t-i}) + 1.5 u_{t-9} u_t + 0.1`, with `u_t ∼ Uniform[0, 0.5]`. The system predicts `y_t` from past `u`.
 
@@ -403,9 +476,13 @@ The *circuit-level pattern* is a parameterized family of layered quantum circuit
 
 ### 9.2 Time-locality of the readout
 
+*Superseded by D003 and D010 (see the table): the window enters through the input.*
+
 Phase 1 uses a **stateless** readout: at each time t, the reservoir state is rebuilt from the input `u_t` alone, layered L times, and measured. The recurrence in the system comes from how the *readout layer* aggregates a window of features, not from accumulated quantum state across time. This is the cheapest, most analyzable variant. The **stateful** variant (carrying `|ψ_{t-1}⟩` forward) is deferred to Phase 1.5 and tracked in MG7.
 
 ### 9.3 Implementation backends
+
+*Superseded by D010 and D011 (see the table; D020): G0.5 runs the registered cases at one tolerance.*
 
 Two equivalent backends are maintained and cross-checked at every CI run:
 
@@ -435,23 +512,25 @@ If HEA fails our gates, *Trotterized Ising* and *random brick-wall* are the two 
 
 ### 9.6 Circuit hash
 
+*Superseded by D010 and D011 (see the table).*
+
 Every reservoir realization produces a SHA-256 `circuit_hash` over the canonical serialization of `(n_qubits, depth, thetas.tobytes(), phis.tobytes(), readout)`. The hash is logged in every run manifest (§16). Two manifests with identical `circuit_hash` MUST produce identical features given identical input sequences (verified by `tests/test_reproducibility.py`).
 
 ---
 
 ## 10. Ablation Suite (8 axes)
 
-The ablation suite (`src/qrc_thresher/reservoirs/ablations.py`) is the harness's main tool for ruling out *trivial* explanations of any apparent QRC separation. Every published positive result MUST be accompanied by the corresponding ablation table.
+The ablation suite (the matched ablations of `src/qrc_thresher/reservoirs/windowed_qrc.py`, D010) is the harness's main tool for ruling out *trivial* explanations of any apparent QRC separation. Every published positive result MUST be accompanied by the corresponding ablation table.
 
 ### 10.1 Ablation axes
 
-A1. **Linearization (`no_entangle`)** — replace the entangling block with the identity. Each input qubit becomes a tiny independent quantum system; no qubit-to-qubit information mixing. Expected: catastrophic loss of capacity. *Failure mode tested:* "separation is a CNOT-counting artifact." Implemented in `extract_features_no_entangle`.
+A1. **Linearization (`no_entangle`)** — replace the entangling block with the identity. Each input qubit becomes a tiny independent quantum system; no qubit-to-qubit information mixing. Expected: catastrophic loss of capacity. *Failure mode tested:* "separation is a CNOT-counting artifact." Implemented as a matched ablation in `reservoirs/windowed_qrc.py` (D010).
 
-A2. **Phase-randomization (`phase_random`)** — draw fresh random `θ`, `ϕ` at each time step rather than fixing them per realization. Expected: collapse to random projection of `u_t` per step; no temporal structure. *Failure mode tested:* "separation is a random-feature artifact." Implemented in `extract_features_phase_random`.
+A2. **Phase-randomization (`phase_random`)** — draw fresh random `θ`, `ϕ` at each time step rather than fixing them per realization. Expected: collapse to random projection of `u_t` per step; no temporal structure. *Failure mode tested:* "separation is a random-feature artifact." Implemented as a matched ablation in `reservoirs/windowed_qrc.py` (D010).
 
-A3. **Haar-random unitary (`haar`)** — sample one Haar-random `U ∼ Haar(2^n)` per realization, apply to angle-encoded state, measure `<Z_i>`. Expected: a strong-but-not-structured baseline. *Failure mode tested:* "separation comes from the circuit structure, not from access to a 2^n-dimensional unitary." Implemented in `extract_features_haar`. **Mandatory for G2.5.**
+A3. **Haar-random unitary (`haar`)** — replace each layer's RZ, RX and CNOT ring, after that layer's re-upload, with an independent Haar-random unitary on all n qubits (`default_rng([reservoir_seed, 2])`; D010), and measure `<Z_i>`. Expected: a strong-but-not-structured baseline. *Failure mode tested:* "separation comes from the circuit structure, not from access to a 2^n-dimensional unitary." Implemented as a matched ablation in `reservoirs/windowed_qrc.py` (D010). **Mandatory for G2.5.**
 
-A4. **Random kitchen sinks (`random_features`)** — classical RKS at the same feature dimension. Tests whether classical random projection at matched dimension is enough. Implemented in `src/qrc_thresher/baselines/random_features.py`.
+A4. **Random kitchen sinks (`random_features`)** — not an ablation: RKS is a tuned classical baseline under `baseline.enabled` (D011, D016 C9), windowed like the QRC, with bandwidth σ/√d and the matched tuning budget. Implemented in `src/qrc_thresher/baselines/random_features.py`; G2 compares against it.
 
 A5. **Observable swap** — replace `Z` with `X` in the readout (after a basis change). Expected: similar capacity up to a basis transformation. *Failure mode tested:* "basis-alignment artifact." A pass requires NRMSE within 10% of `Z`-readout. ASSUMED-DEFAULT (10.A). Tracked in MG5.
 
@@ -462,6 +541,8 @@ A7. **Shot-count scan** — vary shots ∈ {1024, 4096, 16384, exact}. Expected:
 A8. **Encoding swap** — replace `Ry(π · u_t)` with `Rz(π · u_t)` after a Hadamard. Information-theoretically equivalent on a noiseless device. *Failure mode tested:* "encoding-specific bug." Tracked in MG6.
 
 ### 10.2 Self-falsifying ablations
+
+*Superseded by D014 (see the table): no self-falsification clause.*
 
 A1, A2, and A3 are *self-falsifying*: if any of them produces NRMSE/MC comparable to the full QRC (within 5% NRMSE or within 1 SE on MC) on the same task, the published positive result is automatically retracted. The harness enforces this by computing a `self_falsified` boolean in `gate.json` whenever any of A1–A3 is within tolerance of the full system on the same task; a `True` value forces G3 to fail.
 
@@ -475,6 +556,8 @@ Each ablation is run on **a single representative cell** per task (n=4, L=3, def
 
 ### 11.1 Echo-state network (ESN)
 
+*Superseded by D009, D011 and D012 (see the table).*
+
 `src/qrc_thresher/baselines/esn.py`. ReservoirPy-based ESN with:
 
 - Reservoir size `N_ESN = N_quantum_features`, **never** `2^n`. For `z_only`, `N_ESN = n`. For `z_and_zz`, `N_ESN = n + n(n-1)/2`.
@@ -486,9 +569,13 @@ Each ablation is run on **a single representative cell** per task (n=4, L=3, def
 
 ### 11.2 Random kitchen sinks (RKS)
 
+*Superseded by D011 and D016 C9 (see the table).*
+
 `src/qrc_thresher/baselines/random_features.py`. Rahimi–Recht: `ϕ(u) = cos(W · u + b)`, `W ∼ N(0, σ²/d)`, `b ∼ Uniform[0, 2π]`. Dimension matched to QRC features.
 
 ### 11.3 GRU stub
+
+*Superseded by D018 (see the table): the stub is dropped.*
 
 `src/qrc_thresher/baselines/gru.py` is a stub that raises `NotImplementedError` until Phase 1 gates G1 and G2 pass. CPU-only. Not tuned in Phase 1.
 
@@ -501,6 +588,8 @@ ESN and RKS are the two strongest *fair* baselines: both are linear-readout syst
 ## 12. Training, Validation, and Cross-Validation Protocol
 
 ### 12.1 Splits
+
+*Superseded by D011 and D012 (see the table).*
 
 Each task produces a single contiguous sequence per (seed, RR) pair. The sequence is split chronologically into:
 
@@ -523,6 +612,8 @@ The honest QRC-vs.-ESN comparison requires careful matching. We define three mat
 
 ### 12.4 Randomness handling
 
+*Superseded by D010 (see the table): `default_rng([reservoir_seed, tag])`.*
+
 Two seeded `numpy.random.Generator` instances per run: `rng_task = default_rng(task_seed)` and `rng_reservoir = default_rng(reservoir_seed)`. Ablation paths derive a third generator as `default_rng(reservoir_seed + offset)` with documented offsets (`+1` for phase_random, `+2` for haar). ASSUMED-DEFAULT (12.A).
 
 ---
@@ -530,6 +621,8 @@ Two seeded `numpy.random.Generator` instances per run: `rng_task = default_rng(t
 ## 13. Metrics and Their Estimators
 
 ### 13.1 Primary metrics (per task)
+
+*Superseded by D013 (see the table): `stm_memory` sums k ≥ 1.*
 
 - STM(K): **MC** (aggregate). Secondary: per-k correlation², NRMSE per k.
 - parity(d): **accuracy**. Secondary: NRMSE on {-1, +1} mapped target.
@@ -550,6 +643,8 @@ Comparisons are reported as the *paired* difference QRC − ESN (or QRC − RKS)
 
 ### 13.4 Pre-registered effect sizes for separation claims
 
+*Superseded by D013 and D014 (see the table): the `gates:` block was removed.*
+
 - STM-MC: ΔMC ≥ 0.5 over the τ ∈ {0..K} sum, with 95% CI lower bound > 0.
 - parity(3): Δaccuracy ≥ 5 percentage points, with 95% CI lower bound > 0.
 - NARMA-10: ΔNRMSE ≤ −0.05, with 95% CI upper bound < 0.
@@ -557,6 +652,8 @@ Comparisons are reported as the *paired* difference QRC − ESN (or QRC − RKS)
 These thresholds are pre-registered in `configs/alpha_lite.yaml` under a `gates` block (added at first manuscript-track sweep). They MUST NOT be re-tuned after seeing the data.
 
 ### 13.5 Multiple-comparison correction
+
+*Superseded by D013 (see the table): the registered family of five.*
 
 Holm–Bonferroni-corrected p-values across all primary task comparisons in the headline table. ASSUMED-DEFAULT (13.B): Holm–Bonferroni is preferred over BH-FDR because we test a small, fixed family of three null hypotheses.
 
@@ -570,13 +667,19 @@ Holm–Bonferroni-corrected p-values across all primary task comparisons in the 
 
 ### 14.1 Bootstrap procedure
 
+*Superseded by D013 (see the table).*
+
 Default: percentile bootstrap with 1000 resamples (`metrics/stats.py:bootstrap_ci`). Manuscript-track: BCa via `scipy.stats.bootstrap` with 10000 resamples.
 
 ### 14.2 Paired tests
 
+*Superseded by D013 (see the table): d_z.*
+
 `metrics/stats.py:paired_test` returns a `PairedTestResult` with mean diff, std diff, t-statistic, p-value, and Cohen's d. `paired_test` is paired t-test (parametric); `wilcoxon_test` is the rank-based non-parametric companion. Both MUST be reported when sample sizes are small (n_seeds ≤ 5).
 
 ### 14.3 Power analysis (pre-registered)
+
+*Superseded by D013 (see the table).*
 
 Under an effect size of ΔMC = 0.5 and a between-cell SD of 0.4, 5 paired observations yield approximate power 0.55 for a one-sided test at α=0.05. Phase 1.5 expansion to 15 seeds raises power above 0.90. We pre-register these numbers so that an underpowered "fail to reject" cannot be reinterpreted as evidence for the null. See MG2.
 
@@ -592,6 +695,8 @@ A Bayesian framing would require explicit priors on per-task effect sizes, which
 
 ## 15. Decision Gates G0–G7
 
+*Superseded by D013 and D018 (see the table): the intro's `gate.spec.json` and `<name>.json`.*
+
 Gates are evaluated in order; a failed gate halts the publication path. Each gate consumes a `gate.spec.json` (declarative) or a hard-coded specification in `cli.py:gate_cmd`, plus the `results/runs.csv` log, and emits `results/gates/<name>.json`.
 
 Every gate documents: **pass condition**, **fail condition**, **evaluation procedure**, and **artifact path**.
@@ -605,12 +710,26 @@ Every gate documents: **pass condition**, **fail condition**, **evaluation proce
 
 ### 15.2 G0.5 — Backend cross-check (PennyLane ↔ Qiskit)
 
-- **Pass:** PennyLane and Qiskit produce identical `<Z_i>` expectation values within `1e-6` for at least three random `(n, L, seed)` triples on the cross-check circuit (`reservoirs/qiskit_crosscheck.py:verify_crosscheck`).
-- **Fail:** Any pair exceeds tolerance.
-- **Procedure:** `qrc-thresher gate G0.5` (consumes prior cross-check runs in `runs.csv`).
-- **Artifact:** `results/gates/G0.5.json`.
+*Superseded by D010, D011 and D018 (see the table); the cases and the artifact name are fixed in place.*
+
+- **Pass:** PennyLane and an independent Qiskit build agree on every `<Z_i>` (and `<Z_i Z_j>`) expectation within `CROSSCHECK_TOLERANCE` (1e-6, float64) on all 34 registered cases: the 16 π cases of D010 — triples (2, 2, 2026), (4, 3, 137), (5, 4, 7) at every distinct window in {1, 2, n} and both readouts, over 6 steps that include the zero-padded rows — and the 18 scale cases of D011 — (4, 3, 137) at scale ∈ {π/4, π/2, 3π/4}, window ∈ {1, 2, 4}, both readouts.
+- **Fail:** Any case exceeds the tolerance.
+- **Procedure:** `qrc-thresher gate G0.5`; the gate builds and evaluates the cases itself.
+- **Artifact:** `results/gates/G0.5.<stamp>.json`, never overwritten (D018).
+
+### 15.2a G0.7 — Memory sanity gate, protocol v1 (D005, D008)
+
+- **Protocol:** `configs/gates/G0.7.v1.yaml`, committed before any evaluation that used it; a changed protocol is a new version file. `tests/test_preregistration.py` pins a hash of its parsed content.
+- **Pass:** Every seed pair of the config (at least 3) passes both clauses. STM clause: the held-out statistic S = Σ_{k=1..20} r²_k (k = 0 is reported, never counted) beats a permutation null of 200 independent train/test permutations at p ≤ 0.05, with p = (1 + #{null ≥ observed}) / (n + 1). Parity clause: held-out accuracy of the window-2 temporal parity beats its own 200-permutation shuffled-label null at p ≤ 0.05.
+- **Fail:** Any seed fails either clause, or is degenerate (every training feature column constant, std ≤ 1e-12; any held-out prediction column constant; or a non-finite feature, prediction or statistic).
+- **Readout:** one RidgeCV fit per clause over `training.ridge_alphas` with contiguous folds and an intercept; the gate refuses a config whose `ridge_alphas` or `cv_folds` differ from the protocol.
+- **Measurement:** exact (oracle upper bound), by protocol.
+- **Procedure:** `qrc-thresher gate G0.7 --config PATH [--model M] [--tuning-config PATH]`; `--model tuned_qrc` evaluates the tuned design_STM of the tuning config.
+- **Artifact:** `results/gates/G0.7.<model>.<stamp>.json` with `git_commit_hash` and `config_hash` at the top level (files written after D018; older files carry model_details.tuning_config_hash and environment.git_commit_hash), plus `G0.7.<model>.<stamp>.forgetting_curve.png`.
 
 ### 15.3 G1 — STM separation
+
+*Superseded by D013 and D014 (see the table).*
 
 - **Pass:** QRC STM `MC > 1.0` AND QRC `MC` exceeds the entanglement-suppressed (A1) baseline by ≥ 20% on the same (seed, RR) pairs, across `n_seeds ≥ 5`.
 - **Fail:** Either condition violated.
@@ -620,6 +739,8 @@ Every gate documents: **pass condition**, **fail condition**, **evaluation proce
 
 ### 15.4 G2 — Parity separation
 
+*Superseded by D014 (see the table).*
+
 - **Pass:** QRC parity accuracy > 70% at d=3 AND random-features (A4) accuracy < 60% on the same (seed, RR) pairs.
 - **Fail:** Either condition violated.
 - **Inconclusive:** Insufficient seeds.
@@ -627,6 +748,8 @@ Every gate documents: **pass condition**, **fail condition**, **evaluation proce
 - **Artifact:** `results/gates/G2.json`.
 
 ### 15.5 G2.5 — Haar-random discrimination (mandatory)
+
+*Superseded by D010 and D014 (see the table).*
 
 - **Pass:** Full QRC outperforms the Haar-random ablation (A3) by at least 1 standard error on either STM-MC or parity-accuracy.
 - **Fail:** Haar-random matches or exceeds full QRC.
@@ -636,6 +759,9 @@ Every gate documents: **pass condition**, **fail condition**, **evaluation proce
 
 ### 15.6 G3 — Classical-baseline parity
 
+*Superseded by D014 (see the table); the pass condition points to D014.*
+
+- **Under D014:** G3 is a one-sided paired margin of the tuned QRC (design_STM) over the tuned ESN on STM memory (k ≥ 1), Holm-adjusted within the family; the Pass, Fail, Inconclusive and Procedure lines below are history.
 - **Pass:** QRC matches or exceeds parameter-matched best ESN within 1 SE on the headline metric for at least one task.
 - **Fail:** Best ESN dominates QRC by > 1 SE on all three tasks.
 - **Inconclusive:** Mixed across tasks.
@@ -643,6 +769,8 @@ Every gate documents: **pass condition**, **fail condition**, **evaluation proce
 - **Artifact:** `results/gates/G3.json`.
 
 ### 15.7 G4 — NARMA-10 fitness
+
+*Superseded by D014 (see the table).*
 
 - **Pass:** QRC NARMA-10 NRMSE < 0.60 AND within 2× the tuned ESN NRMSE.
 - **Fail:** Either bound violated.
@@ -652,6 +780,8 @@ Every gate documents: **pass condition**, **fail condition**, **evaluation proce
 
 ### 15.8 G5 — Full-circuit cross-check
 
+*Superseded by D018 (see the table; D020): the artifact is timestamped.*
+
 - **Pass:** PennyLane vs. Qiskit full-circuit agreement within `1e-6` on per-feature expectations across the gated cells (extends G0.5 to the full sweep).
 - **Fail:** Any cell exceeds tolerance.
 - **Procedure:** `qrc-thresher gate G5`.
@@ -659,11 +789,15 @@ Every gate documents: **pass condition**, **fail condition**, **evaluation proce
 
 ### 15.9 G6 — Phase 2 readiness (deferred)
 
+*Superseded by D018 (see the table; D020): the artifact is timestamped.*
+
 - **Pass:** G5 pass AND a chosen alternative ansatz family is enumerated AND a written Phase 2 plan is committed to `docs/DECISIONS.md`.
 - **Fail:** Any prerequisite missing.
 - **Procedure:** Reviewed manually; emits `results/gates/G6.json` as a checklist.
 
 ### 15.10 G7 — Hardware readiness (deferred)
+
+*Superseded by D018 (see the table; D020): the artifact is timestamped.*
 
 - **Pass:** G5 pass AND target NISQ platform chosen with documented native gate set AND budget approved AND device noise calibrated to within 2× of the harness noise model on relevant gate-error rates.
 - **Fail:** Any prerequisite missing.
@@ -679,13 +813,17 @@ A gate verdict CANNOT be overwritten in place; a re-evaluation produces a *new* 
 
 ---
 
-## 16. Proof Layer: Manifest Schema v1.1
+## 16. Proof Layer: Manifest Schema 1.4
+
+*Superseded by D004 and D013 (see the table; D010 and D011 for the circuit_hash entry); the version strings and the `backend_device` entry are fixed in place.*
 
 ### 16.1 Purpose
 
 The manifest is the single artifact a reviewer needs to reproduce *or refute* a claim. It is the authoritative provenance record.
 
-### 16.2 v1.1 fields (per row in `results/runs.csv`)
+### 16.2 Fields (schema 1.4; per row in `results/runs.csv`)
+
+The full header is `CSV_FIELDNAMES` in `proof/run_manifest.py`, whose docstring gives the schema history; the list below describes the v1.1 columns.
 
 Implemented in `src/qrc_thresher/proof/run_manifest.py`. Columns:
 
@@ -699,7 +837,7 @@ Implemented in `src/qrc_thresher/proof/run_manifest.py`. Columns:
 - `task_seed`, `reservoir_seed` — integers.
 - `python_version` — `major.minor.patch`.
 - `package_versions` — JSON of installed versions for every required package.
-- `backend_device` — PennyLane device string.
+- `backend_device` — The device the features came from: the PennyLane device string for QRC rows (`default.qubit`), `numpy_esn` for ESN rows (D009) and `numpy_rks` for RKS rows (D011).
 - `runtime_per_stage_seconds` — JSON of per-stage timings.
 - `entanglement_metric` — partial-transpose log-negativity (or null in Phase 1).
 - `success` — bool.
@@ -722,7 +860,7 @@ ASSUMED-DEFAULT (16.A): Phase 1 ships unsigned manifests. Phase 1.5 introduces E
 
 ### 16.6 Migration from earlier schemas
 
-The Phase 1 stub uses schema v1.1 from day one. There is no v1.0 to migrate.
+Phase 1 started at schema v1.1; rows are now at 1.4 (1.2: measurement_model, D004; 1.3: n_configs and n_validation_evals, D009; 1.4: secondary_metrics, device, precision, design, sweep_id and tuning_record_sha, D011 and D013). Rows are never rewritten; a row's columns tell its version apart. There is no v1.0 to migrate.
 
 ---
 
@@ -735,9 +873,11 @@ The CLI lives in `src/qrc_thresher/cli.py` and is exposed via `python -m qrc_thr
 - `qrc-thresher run TASK [--config PATH] [--workers N] [--design {tuned,default}] [--design-task TASK]` — Run a task benchmark (TASK ∈ {stm, parity, narma}) on every seed pair of the config; one manifest row per pair and deployment. There is no `--seed`: the pairs come from the config (D010, D013).
 - `qrc-thresher ablation NAME TASK [--config PATH] [--design {tuned,default}] [--design-task TASK]` — Run a matched ablation (NAME ∈ {phase_random, no_entangle, haar}; RKS is a baseline) of TASK on every seed pair; one row per pair and deployment.
 - `qrc-thresher baseline TASK [--config PATH] [--design {tuned,default}]` — Run the enabled classical baselines on every seed pair (rows `esn`, `esn_parity`, `esn_narma`, `rks`, `rks_parity`, `rks_narma`).
-- `qrc-thresher gate NAME [--config PATH] [--model M] [--tuning-config PATH]` — Evaluate a gate (NAME ∈ {G0, G0.5, G0.7, family, G1, G2, G2.5, G3, G4, G5, G6, G7}). G0, G0.5, G5–G7 write `results/gates/<name>.json`; G0.7 and the family write timestamped JSONs and never overwrite. `family` (and any member G1–G4, G2.5) evaluates the comparative family of `--config` as one unit (D013, D014) and needs an explicit `--config`.
-- `qrc-thresher plot RUN_ID [--out DIR]` — Generate figures for a run.
-- `qrc-thresher summary [--phase PHASE]` — Aggregate `runs.csv` into a markdown report under `results/summaries/`.
+- `qrc-thresher gate NAME [--config PATH] [--model M] [--tuning-config PATH]` — Evaluate a gate (NAME ∈ {G0, G0.5, G0.7, family, G1, G2, G2.5, G3, G4, G5, G6, G7}). Every gate file is timestamped and never overwritten (D018): G0, G0.5, G5–G7 write `results/gates/<name>.<stamp>.json` with `git_commit_hash`, `config_hash` (or `config_hash_reason`) and, where a reservoir is evaluated, `measurement_model`; G0.7 writes `G0.7.<model>.<stamp>.json` and its figure; the family writes `COMPARATIVE.v1.<stamp>.json` and one view per member. `family` (and any member G1–G4, G2.5) evaluates the comparative family of `--config` as one unit (D013, D014) and needs an explicit `--config`.
+- `qrc-thresher plot RUN_ID [--out DIR]` — A stub (`commands/plot.py`); it generates no figures yet.
+- `qrc-thresher summary [--phase PHASE] [--config PATH]` — Aggregate `runs.csv` into a markdown report under `results/summaries/`, one row per (config_hash, sweep_id, deployment, task) with the deployment label and design (D019); `--config` names the config file used to resolve the deployments (else the tuning records' config_path), accepted only if its canonical hash equals the rows' config_hash.
+- `qrc-thresher evidence GATE_JSON... [--config PATH] [--runs-csv PATH] [--out-root DIR] [--results-dir DIR]` — Export a family record (with its member views, G0.7 file and figure, tuning records and config), G0.7 files and legacy gate files to `docs/evidence/<short-commit>/` with a `MANIFEST.sha256`, a README and the allowlisted rows; refuses an unknown or `-dirty` commit, a planted path or a leaked key, and never overwrites (D019).
+- `qrc-thresher scorecard [--evidence DIR]... [--out PATH]` — Render `docs/scorecard.md` from evidence folders only; a gate without evidence shows `missing` (D019).
 
 ### 17.1 Exit codes
 
@@ -756,7 +896,7 @@ The CLI MUST be a thin shell over the library. Its options are limited to *which
 
 `qrc-thresher health` runs (in `<30 s`):
 
-1. Source health (`proof/source_health.py`): Python version ≥ 3.11; required packages importable (`pennylane`, `qiskit`, `sklearn`, `numpy`, `scipy`, `pandas`, `matplotlib`, `pydantic`, `yaml`, `pytest`, `reservoirpy`, `click`); `git rev-parse HEAD` succeeds; `numpy.random.default_rng` works.
+1. Source health (`proof/source_health.py`): Python version ≥ 3.11; required packages importable (`pennylane`, `qiskit`, `sklearn`, `numpy`, `scipy`, `pandas`, `matplotlib`, `pydantic`, `yaml`, `click`); `git rev-parse HEAD` succeeds; `numpy.random.default_rng` works.
 2. Benchmark health (`proof/benchmark_health.py`): `alpha_lite.yaml` validates against the schema; STM and parity generators are deterministic; 2-qubit QRC smoke circuit returns finite features; ESN baseline fits on a tiny problem; metric functions return finite values; manifest writer round-trips; full reproducibility check passes (same seeds → same outputs).
 3. Aggregate report written to `results/health/<UTC-timestamp>.json`.
 
@@ -767,6 +907,8 @@ This is the "first thing a reviewer types" command. If it fails on a reviewer's 
 ## 19. Reproducibility Contract
 
 ### 19.1 The five-line reproduction
+
+*Superseded by D013, D014 and D016 C9 (see the table; D020): the family needs an explicit `--config`; App. F.2 carries the CP4c sequence.*
 
 A reviewer with the repository, the lockfile, and the manifest MUST be able to reproduce a Phase 1 sweep with at most:
 
@@ -868,6 +1010,8 @@ Exit criteria: G0–G5 all `pass` *or* G5 `inconclusive` after seed-budget expan
 
 ### 22.2 Phase 1.5 — Variance reduction and NARMA-10
 
+*Superseded by D018 (see the table).*
+
 Adds n=10, increases seeds to 15, increases RR to 5, adds NARMA-20 and the GRU baseline. Closes the same gates with tighter CIs. Introduces manifest signing (§16.4). Deliverable: `v0.2.0`.
 
 ### 22.3 Phase 2 — Hardware
@@ -931,6 +1075,8 @@ R10. **License confusion.** Mitigation: explicit triple-license declaration (§2
 
 ## 25. Differentiation vs. Prior Art
 
+*Superseded by D014 and D018 (see the table; D020): the Closest-competitor paragraph.*
+
 QRC-Thresher's positioning is best summarized by what it does not assume that prior work does assume:
 
 - It does not assume a specific physical Hamiltonian. The pattern is gate-model and HEA.
@@ -941,7 +1087,7 @@ QRC-Thresher's positioning is best summarized by what it does not assume that pr
 
 Closest competitor: the QRC-Lab line referenced in `docs/REFERENCES.md` (arXiv:2602.03522, Feb 2026), which uses a similar HEA shape (ring entanglement, Pauli-Z readout, ridge regression). Differentiation: QRC-Thresher's mandatory ablation suite (A1–A8), self-falsifying gates (G2.5), and signed manifests have no peer in QRC-Lab. A formal differentiation memo is required by G1 before any arXiv submission (per `docs/REFERENCES.md`).
 
-The published-bar entry `arXiv:2510.25183` reports ESN NRMSE = 0.185 vs. QRC NRMSE = 0.485 on NARMA-10. This is the expected performance gap on NARMA. We frame honest reporting against this number.
+The published bar is the `arXiv:2510.25183` entry of `docs/REFERENCES.md` (pinned to v1 there); this document does not repeat its numbers. Honest reporting is framed against that entry, and REFERENCES is the one place it is stated.
 
 ---
 
@@ -1014,6 +1160,8 @@ External identifier: **qrc-thresher** (lowercase in code; capitalized in prose).
 
 ## 28. Methodology Gap Register (MG1–MG10)
 
+*Superseded by D003 (see the table): MG4.*
+
 The methodology gap register tracks known limitations of the Phase 1 protocol that are *not* defects but *acknowledged scope cuts*. Each entry MUST be addressed by Phase 1.5 or explicitly carried forward to Phase 2 with a written justification.
 
 - **MG1 — Sequence length.** Default `task.length = 500` is small enough that long-memory tasks (NARMA-10) may saturate. Phase 1.5 raises to 2000+. Owner: tasks team.
@@ -1032,6 +1180,8 @@ The register is the *only* sanctioned place to record acknowledged gaps. Anythin
 ---
 
 ## 29. Appendix A — Assumed Defaults Index
+
+*Superseded by D011 (4.B, 9.A), D010 (12.A) and D013 (13.A, 13.B) (see the table).*
 
 Each ASSUMED-DEFAULT in the body is consolidated here for review. Any of these MAY be promoted to a `DECIDED` entry in `docs/DECISIONS.md` once reviewed; once promoted, this document is updated to drop the ASSUMED-DEFAULT label.
 
@@ -1060,12 +1210,15 @@ Each ASSUMED-DEFAULT in the body is consolidated here for review. Any of these M
 - 21.C — GitHub Actions single-workflow CI on Python 3.11 (required) and 3.12 (best-effort).
 - 22.A — Manuscript repo separate (`qrc-thresher-paper`).
 - 27.A — Optional SPDX headers in source files.
+- E.A — Block CV with a 200-step per-fold ESN warmup (App. E.6); superseded by D009 and D012 (one washout for every model).
 
 A reviewer challenging any default should open an issue tagged `assumed-default` and reference its index above.
 
 ---
 
 ## 30. Appendix B — Example Configuration
+
+*Superseded by D013 and D014 (see the table): its "adds an explicit `gates` block".*
 
 ```yaml
 # configs/alpha_lite.yaml — Phase 1.0 default (current)
@@ -1083,13 +1236,11 @@ reservoir:
   readout: z_only
 baseline:
   enabled:
-    - esn
-    - random_features
+    - esn            # RKS (random_features) is enabled in comparative.yaml only (D011)
   esn_grid:
     spectral_radius: [0.8, 0.9, 0.95, 0.99, 1.0]
     input_scaling: [0.1, 0.5, 1.0]
     leak_rate: [0.1, 0.3, 0.5, 1.0]
-    ridge_alpha: [1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2, 1.0]
   rks_dim: null
 training:
   ridge_alphas: [1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2, 1.0, 100.0]
@@ -1111,9 +1262,11 @@ A manuscript-track variant (`configs/alpha_phase1_manuscript.yaml`, to be added)
 
 ### 31.1 `results/runs.csv` columns
 
-Defined by `CSV_FIELDNAMES` in `proof/run_manifest.py`. See §16.2 for the complete list.
+Defined by `CSV_FIELDNAMES` in `proof/run_manifest.py` (the complete list); §16.2 describes the v1.1 columns.
 
 ### 31.2 `results/gates/<name>.json` shape
+
+*Superseded by D013 and D018 (see the table).*
 
 ```json
 {
@@ -1169,6 +1322,8 @@ Defined by `CSV_FIELDNAMES` in `proof/run_manifest.py`. See §16.2 for the compl
 
 ## 32. Appendix D — Acceptance Checklist for Phase 1
 
+*Superseded by D014 (see the table).*
+
 A Phase 1 release is acceptable when *all* boxes below are checked. The checklist is a literal copy-paste into the `RESULTS.md` of the tagged release.
 
 - [ ] `qrc-thresher health` exits 0 on the reference workstation and on at least one independent reviewer's machine.
@@ -1183,7 +1338,7 @@ A Phase 1 release is acceptable when *all* boxes below are checked. The checklis
 - [ ] Ablation table A1–A8 attached.
 - [ ] `n_seeds ≥ 5` AND `n_rr ≥ 3` for every gated cell.
 - [ ] Pre-registered effect sizes, seeds, RR count, and grid declarations match the config.
-- [ ] Manifest schema v1.1; SHA-256 hashes present and verifiable.
+- [ ] Manifest schema 1.4; SHA-256 hashes present and verifiable.
 - [ ] `RESULTS.md` contains: gate verdicts, T1, T3, manifest paths, *no narrative beyond the §26.4 abstract template*.
 - [ ] `docs/DECISIONS.md` updated with the Phase 1 outcome ADR.
 - [ ] All ASSUMED-DEFAULT entries either remain (acceptable) or are promoted to `docs/DECISIONS.md`.
@@ -1202,6 +1357,7 @@ When all boxes are checked, the release is *gated*. The harness has discharged i
 **Changelog:**
 - 2026-05-01 — v1.0 — Initial canonical BUILD_SPEC.md authored (Forge-1) and validated (Forge-2). 31 sections + appendices A–D + MG register MG1–MG10 + gates G0–G7.
 - 2026-09-24 — v1.1 — §17 and Appendix F brought to the CP4 CLI (D010, D011, D013, D016): `run`/`ablation` run every seed pair of the config (no `--seed`), `ablation NAME TASK`, `tune`, `baseline`, `gate family` and the `--design`/`--design-task`/`--tuning-config` flags; the gate list gains G0.7, G6, G7 and `family`; RKS leaves the ablation list.
+- 2026-09-26 — v1.2 — The supersession ledger (D017, and D020's addendum) copied after the header block, with an inline pointer under every superseded heading; schema strings brought to 1.4; the config examples corrected where F.1 lists them (no `gru`, no `ridge_alpha` in `esn_grid`, RKS a baseline); §10 and §10.1 (matched ablations; RKS a baseline); §15.2 (34 cases) and the new §15.2a G0.7 v1; §15.11/§17 timestamped gate files (D018); §16.2 and §16.6; §17's `evidence`, `scorecard` and `summary` lines, with `plot` a stub; §18; App. E.6 and E.A; App. F.2's CP4c sequence.
 
 *End of BUILD_SPEC.md.*
 
@@ -1251,12 +1407,14 @@ LASSO would penalize sparsity, which is unnatural for our random dense features;
 
 ### E.6 The CV subtlety: state continuation across folds (extends §12.1)
 
+*Superseded by D009 and D012 (see the table).*
+
 Time-series cross-validation is subtle because a reservoir's state at time `t` depends on its state at `t − 1`. Naïvely `KFold` over time indices breaks the recurrence at fold boundaries. Two options:
 
 1. **Block CV.** Use contiguous folds; warmup the reservoir at the start of each fold from a fresh `|0⟩^n` state. Discard the warmup window from the metric. This is the standard reservoir-computing protocol.
 2. **State-continuation CV.** Carry reservoir state across fold boundaries. Discard nothing.
 
-Phase 1's stateless reservoir (§9.2) makes this question moot at evaluation time — there is no carried state. But the *baseline* ESN does have carried state, and the validation/test boundary in `RidgeCV` is therefore subject to this subtlety. We use **block CV** with a 200-step warmup (ASSUMED-DEFAULT E.A) for the ESN; the per-fold warmup is discarded from both fitting and scoring.
+Phase 1's stateless reservoir (§9.2) makes this question moot at evaluation time — there is no carried state. But the *baseline* ESN does have carried state, and the validation/test boundary in `RidgeCV` is therefore subject to this subtlety. We use **block CV** for the ESN (contiguous validation blocks of the training rows, D009). The warmup is not the 200-step per-fold warmup this note assumed (ASSUMED-DEFAULT E.A, superseded): every model, ESN included, drops the one `training.washout` window of D012 and nothing else.
 
 Phase 1.5's stateful QRC variant inherits the same convention. State-continuation CV is documented in MG7 and reserved for Phase 2 experimentation.
 
@@ -1272,6 +1430,8 @@ The cost is implementation complexity (we delegate to `scipy.stats.bootstrap`) a
 
 ### E.8 Holm vs. Bonferroni vs. BH-FDR (extends §13.5)
 
+*Superseded by D013 (see the table; D020): the registered family has five members.*
+
 Holm–Bonferroni is the right choice in Phase 1 because:
 
 - We test a *small, fixed* family of three null hypotheses (one per task), pre-registered. The family is not screened from a larger pool.
@@ -1281,6 +1441,8 @@ Holm–Bonferroni is the right choice in Phase 1 because:
 The choice is documented in `gate.spec.json` and locked into the manifest. A reviewer who prefers Bonferroni or BH-FDR can recompute from the per-test p-values logged in `runs.csv`.
 
 ### E.9 Power analysis under realistic SDs (extends §14.3)
+
+*Superseded by D013 (see the table).*
 
 Empirical pilot runs (n=4, L=3, default config, three seeds) yielded between-cell SDs of:
 
@@ -1377,7 +1539,35 @@ qrc-thresher gate family --config configs/comparative.yaml
 
 Each run appends one row per seed pair (and deployment) to `results/runs.csv`. The gates consume
 the CSV; the family also needs the tuning records and the tuned G0.7 evaluation. The full CP4c
-sequence (including the `--design default` table) is in the CP4b report and D016.
+sequence, run on commit 8ed2df4 and registered as run 4 (D019), is:
+
+```bash
+qrc-thresher tune --config configs/comparative.yaml
+qrc-thresher run stm --config configs/comparative.yaml
+qrc-thresher run parity --config configs/comparative.yaml
+qrc-thresher run narma --config configs/comparative.yaml
+qrc-thresher run parity --config configs/comparative.yaml --design-task stm
+qrc-thresher run stm --config configs/comparative.yaml --design default
+qrc-thresher run parity --config configs/comparative.yaml --design default
+qrc-thresher run narma --config configs/comparative.yaml --design default
+qrc-thresher ablation no_entangle stm --config configs/comparative.yaml
+qrc-thresher ablation no_entangle parity --config configs/comparative.yaml --design-task stm
+qrc-thresher ablation no_entangle stm --config configs/comparative.yaml --design default
+qrc-thresher ablation no_entangle parity --config configs/comparative.yaml --design default
+qrc-thresher ablation haar stm --config configs/comparative.yaml
+qrc-thresher ablation haar stm --config configs/comparative.yaml --design default
+qrc-thresher baseline stm --config configs/comparative.yaml
+qrc-thresher baseline stm --config configs/comparative.yaml --design default
+qrc-thresher baseline parity --config configs/comparative.yaml
+qrc-thresher baseline parity --config configs/comparative.yaml --design default
+qrc-thresher baseline narma --config configs/comparative.yaml
+qrc-thresher baseline narma --config configs/comparative.yaml --design default
+qrc-thresher gate G0.7 --config configs/alpha_lite.yaml --model tuned_qrc --tuning-config configs/comparative.yaml
+qrc-thresher gate family --config configs/comparative.yaml
+qrc-thresher summary --phase cp4c
+```
+
+The `--design default` rows feed each member's default-design table, which is reported and never gated (D014). The sequence archived `results/runs.csv`, `results/experiments.db` and `results/tuning/<config_hash>/` before it started; the `summary` at its end writes under `results/summaries/` and is not evidence.
 
 ### F.3 Running an ablation
 
@@ -1390,8 +1580,9 @@ qrc-thresher gate G2.5 --config configs/comparative.yaml
 
 ### F.4 Generating figures
 
+`qrc-thresher plot` is a stub (`commands/plot.py`) and writes no figures; the G0.7 evaluation writes its forgetting-curve figure beside its JSON (`results/gates/G0.7.<model>.<stamp>.forgetting_curve.png`). The summary of the rows:
+
 ```bash
-qrc-thresher plot <run_id> --out results/figures/<run_id>
 qrc-thresher summary --phase phase1
 ```
 
@@ -1409,6 +1600,8 @@ diff <expected-gate.json> results/gates/<the JSON the gate printed>
 ```
 
 ### F.6 Adding a new ablation axis
+
+*Superseded by D010 (see the table; D020): matched ablations live in `reservoirs/windowed_qrc.py`.*
 
 1. Implement the ablation in `src/qrc_thresher/reservoirs/ablations.py` (or under `baselines/` if classical).
 2. Add a `Choice` literal to `cli.py:ablation_cmd`.
