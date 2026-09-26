@@ -101,7 +101,6 @@ class TestSmoothed:
 
     def test_stateful_qrc_result_stays_importable(self) -> None:
         from qrc_thresher.reservoirs.smoothed_qrc import SmoothedQRCResult
-
         from qrc_thresher.reservoirs.stateful_qrc import StatefulQRCResult
 
         assert StatefulQRCResult is SmoothedQRCResult
@@ -110,7 +109,6 @@ class TestSmoothed:
 class TestDeprecatedShim:
     def test_extract_features_stateful_warns_on_every_call_and_returns_identical_values(self):
         from qrc_thresher.reservoirs.smoothed_qrc import extract_features_smoothed
-
         from qrc_thresher.reservoirs.stateful_qrc import extract_features_stateful
 
         params, u = _params_and_input()

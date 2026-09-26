@@ -75,7 +75,7 @@ class BaselineConfig(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    enabled: List[Literal['esn', 'random_features', 'gru']]
+    enabled: List[Literal['esn', 'random_features']]  # the GRU stub was dropped (D018)
     esn_grid: Optional[ESNGridConfig] = None
     rks_dim: Optional[int] = None
 

@@ -1,45 +1,35 @@
-"""Stateful reservoir helpers for Phase 2 carry-depth experiments."""
+"""Deprecated shim for ``reservoirs.smoothed_qrc`` (docs/DECISIONS.md D018; defect D2).
+
+The former "stateful" extractor carried no quantum state: it smooths the memoryless features
+classically. Use ``extract_features_smoothed``. ``extract_features_stateful`` returns identical
+values and warns with a DeprecationWarning on every call (never at import); nothing is deleted.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import warnings
 
 import numpy as np
 
-from qrc_thresher.reservoirs.pennylane_qrc import QRCParams, extract_features
+from qrc_thresher.reservoirs.pennylane_qrc import QRCParams
+from qrc_thresher.reservoirs.smoothed_qrc import SmoothedQRCResult, extract_features_smoothed
 
-
-@dataclass(frozen=True, slots=True)
-class StatefulQRCResult:
-    """Result container for stateful extraction."""
-
-    features: np.ndarray
-    state_trace: np.ndarray
+StatefulQRCResult = SmoothedQRCResult  # the same class, kept importable
 
 
 def extract_features_stateful(
     u: np.ndarray,
     params: QRCParams,
     carry_depth: int = 1,
-) -> StatefulQRCResult:
-    """Extract features with a simple rolling carry-state approximation.
+) -> SmoothedQRCResult:
+    """Deprecated: identical to ``extract_features_smoothed`` (classical smoothing, not memory)."""
+    warnings.warn(
+        'extract_features_stateful is deprecated: it adds classical smoothing, not quantum '
+        'memory; use qrc_thresher.reservoirs.smoothed_qrc.extract_features_smoothed (D018)',
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return extract_features_smoothed(u, params, carry_depth=carry_depth)
 
-    This is a lightweight Phase 2 scaffold: it blends current and previous
-    feature vectors to emulate carried internal state while preserving the
-    existing deterministic QRC feature extractor.
-    """
-    if carry_depth < 1:
-        raise ValueError(f'carry_depth must be >= 1, got {carry_depth}')
 
-    base = extract_features(u, params)
-    features = np.array(base, copy=True)
-    state = np.zeros_like(features)
-
-    for t in range(len(features)):
-        start = max(0, t - carry_depth)
-        window = base[start : t + 1]
-        carried = np.mean(window, axis=0)
-        state[t] = carried
-        features[t] = 0.5 * base[t] + 0.5 * carried
-
-    return StatefulQRCResult(features=features, state_trace=state)
+__all__ = ['StatefulQRCResult', 'extract_features_stateful']

@@ -41,6 +41,12 @@ def register_builtin_plugins(hub: RegistryHub) -> None:
         'pennylane',
         _lazy_plugin('qrc_thresher.reservoirs.pennylane_qrc', 'extract_features'),
     )
+    # Classical smoothing of the memoryless features (D018); 'stateful' is its deprecated
+    # name and warns on every call.
+    hub.reservoirs.register(
+        'smoothed',
+        _lazy_plugin('qrc_thresher.reservoirs.smoothed_qrc', 'extract_features_smoothed'),
+    )
     hub.reservoirs.register(
         'stateful',
         _lazy_plugin('qrc_thresher.reservoirs.stateful_qrc', 'extract_features_stateful'),
@@ -81,7 +87,6 @@ def register_builtin_plugins(hub: RegistryHub) -> None:
         'random_features_train',
         _lazy_plugin('qrc_thresher.baselines.random_features', 'train_rks'),
     )
-    hub.baselines.register('gru', _lazy_plugin('qrc_thresher.baselines.gru', 'train_gru'))
 
     # Gates
     hub.gates.register('G0', _lazy_plugin('qrc_thresher.commands.gate', '_evaluate_gate_g0'))
