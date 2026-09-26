@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -43,8 +44,12 @@ def gate_handler(
 
     if name == 'G0.5':
         result, evidence, run_ids = _evaluate_gate_g05()
-        _write_gate_result(gates_dir, name, result, evidence, run_ids)
-        print(f'Gate {name}: {result}')
+        path = _write_gate_result(
+            gates_dir, name, result, evidence, run_ids, measurement_model='exact',
+            config_hash_reason='G0.5 evaluates its registered cases, not an experiment config',
+        )
+        print(f'Gate {name}: {result}  [measurement: {_label("exact")}]')
+        print(f'  json: {path.as_posix()}')
         return {'PASS': 0, 'FAIL': 1, 'INSUFFICIENT_EVIDENCE': 2}.get(result, 2)
 
     if name == 'G0.7':
@@ -52,7 +57,14 @@ def gate_handler(
         result, evidence, run_ids = _evaluate_gate_g07(
             config_path=Path(config_path), model=model, tuning_config=Path(tuning_config)
         )
-        print(f'Gate {name}: {result}')
+        from qrc_thresher.config import MEASUREMENT_LABELS, measurement_label
+
+        if model in ('esn_linear', 'esn_nonlinear'):
+            # By kind, as the scorecard shows it (CP5b C4); the JSON keeps the protocol's label.
+            shown_label = MEASUREMENT_LABELS['classical']
+        else:
+            shown_label = evidence.get('measurement_label') or measurement_label('exact')
+        print(f'Gate {name}: {result}  [measurement: {shown_label}]')
         print(f"  {evidence['message']}")
         print(f"  json: {evidence['json']}")
         print(f"  figure: {evidence['figure']}")
@@ -110,7 +122,9 @@ def _family_command(name: str, config_path: Path, gates_dir: Path) -> int:
         config_path, Path('results') / 'runs.csv', gates_dir
     )
     if error is not None:
-        print(f'Gate {name}: {comparative.INSUFFICIENT}')
+        label = _config_label(config_path)
+        suffix = f'  [measurement: {label}]' if label else ''
+        print(f'Gate {name}: {comparative.INSUFFICIENT}{suffix}')
         print(f'  {error}')
         return 2
     paths = comparative.write_family_report(result, gates_dir)
@@ -118,8 +132,12 @@ def _family_command(name: str, config_path: Path, gates_dir: Path) -> int:
     shown = comparative.MEMBERS if name == 'family' else (name,)
     for member in shown:
         entry = members[member]
+        labels = entry.get('measurement_labels') or {}
+        shown_label = (f"a: {labels['a']}; b: {labels['b']}" if labels
+                       else result['measurement_label'])
         line = (f"Gate {member}: {entry['result']}  (raw p = {entry['raw_p']:.4g}, Holm-adjusted "
-                f"p = {entry['adjusted_p']:.4g}, n = {entry['n_pairs']})")
+                f"p = {entry['adjusted_p']:.4g}, n = {entry['n_pairs']}) "
+                f"[measurement: {shown_label}]")
         print(line)
         if entry['message']:
             print(f"  {entry['message']}")
@@ -331,7 +349,8 @@ def _evaluate_gate_g07(
     from qrc_thresher.config import load_config
     from qrc_thresher.gates import g07
 
-    cfg = load_config(config_path or Path('configs/alpha_lite.yaml'))
+    cfg_path = Path(config_path or 'configs/alpha_lite.yaml')
+    cfg = load_config(cfg_path)
     tuning_record = None
     if model == 'tuned_qrc':
         from qrc_thresher.tuning import TuningRecordMissing, load_record
@@ -357,7 +376,7 @@ def _evaluate_gate_g07(
             'parity_clause': 'INSUFFICIENT_EVIDENCE', 'measurement_label': '',
             'json': '', 'figure': '',
         }, []
-    paths = g07.write_report(result, out_dir or Path('results') / 'gates')
+    paths = g07.write_report(result, out_dir or Path('results') / 'gates', config_path=cfg_path)
     evidence = {
         'message': result['message'],
         'stm_clause': result['clauses']['stm']['result'],
@@ -592,21 +611,76 @@ def _evaluate_gate_g7(
     return 'PASS', evidence, []
 
 
+def _label(model: Optional[str]) -> Optional[str]:
+    from qrc_thresher.config import measurement_label
+
+    return measurement_label(model) if model is not None else None
+
+
+def _config_label(config_path) -> Optional[str]:
+    """The measurement label of a config that loads, else None (CP5b C5: the INSUFFICIENT line
+    carries the label only when the config loads)."""
+    from qrc_thresher.config import load_config, measurement_label
+
+    if config_path is None:
+        return None
+    try:
+        cfg = load_config(Path(config_path))
+    except Exception:  # noqa: BLE001 - any load failure prints the line bare
+        return None
+    return measurement_label(cfg.measurement.model)
+
+
 def _write_gate_result(
     gates_dir: Path,
     name: str,
     result: str,
     evidence: dict,
     run_ids: list,
-) -> None:
-    """Write gate result JSON to results/gates/<name>.json."""
-    gate_file = gates_dir / f'{name}.json'
+    *,
+    config_path: Optional[Path] = None,
+    config_hash: Optional[str] = None,
+    config_hash_reason: Optional[str] = None,
+    measurement_model: Optional[str] = None,
+) -> Path:
+    """Write a legacy gate JSON (G0, G0.5, G5, G6, G7) as results/gates/<name>.<stamp>.json.
+
+    Never overwrites (one shared never-overwrite helper with the family; D018, CP5a ruling 6).
+    Beside gate, result, evidence, run_ids and timestamp_utc the file carries git_commit_hash
+    (with -dirty), config_hash (of ``config_path`` or as given; null plus config_hash_reason
+    otherwise) and, wherever a reservoir was evaluated, measurement_model and
+    measurement_label. Serialised with allow_nan=False and written as ASCII bytes with LF line
+    endings; the file is opened with the mode as the only argument.
+    """
+    from qrc_thresher.gates.comparative import _fresh
+    from qrc_thresher.proof.run_manifest import _config_hash, _git_commit_hash
+
+    if config_hash is None and config_path is not None:
+        computed = _config_hash(Path(config_path))
+        if computed == 'unknown':
+            config_hash_reason = config_hash_reason or (
+                f'config file {Path(config_path).as_posix()} not found'
+            )
+        else:
+            config_hash = computed
+    if config_hash is None and config_hash_reason is None:
+        config_hash_reason = f'{name} evaluates no experiment config'
     data = {
         'gate': name,
         'result': result,
         'evidence': evidence,
         'run_ids': run_ids,
         'timestamp_utc': datetime.now(timezone.utc).isoformat(),
+        'git_commit_hash': _git_commit_hash(),
+        'config_hash': config_hash,
+        'config_hash_reason': None if config_hash is not None else config_hash_reason,
+        'measurement_model': measurement_model,
+        'measurement_label': _label(measurement_model),
     }
-    with gate_file.open('w') as f:
-        json.dump(data, f, indent=2)
+    text = json.dumps(data, indent=2, allow_nan=False)  # raises before any file is opened
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    safe = re.sub(r'[^A-Za-z0-9._-]+', '_', name)
+    gate_file = _fresh(gates_dir, f'{safe}.{stamp}')
+    with gate_file.open('xb') as f:
+        f.write((text + '\n').encode('ascii'))
+    return gate_file

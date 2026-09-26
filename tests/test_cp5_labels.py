@@ -258,6 +258,47 @@ class TestFailedRowsKeepTheirTask:
         assert all(r['measurement_model'] == 'classical' for r in rows)
 
 
+class TestCp5b1:
+    """CP5b.1 (CP5b ruling 3): the never-overwrite helper under a frozen clock, and the run
+    command's FAILED line label (C2)."""
+
+    def test_two_writes_under_one_stamp_give_two_files(self, tmp_path, monkeypatch) -> None:
+        import datetime as dt
+
+        from qrc_thresher.commands import gate
+
+        frozen = dt.datetime(2026, 9, 26, 12, 0, 0, tzinfo=dt.timezone.utc)
+
+        class Frozen(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen if tz is None else frozen.astimezone(tz)
+
+        monkeypatch.setattr(gate, 'datetime', Frozen)
+        first = gate._write_gate_result(tmp_path, 'G5', 'PASS', {'x': 1.0}, ['r1'],
+                                        config_path=DEFAULT_CONFIG, measurement_model='exact')
+        first_bytes = first.read_bytes()
+        second = gate._write_gate_result(tmp_path, 'G5', 'FAIL', {'x': 2.0}, ['r2'],
+                                         config_path=DEFAULT_CONFIG, measurement_model='exact')
+        assert first != second and first.exists() and second.exists()
+        assert first.read_bytes() == first_bytes
+        assert json.loads(first_bytes.decode('ascii'))['result'] == 'PASS'
+        assert json.loads(second.read_bytes().decode('ascii'))['result'] == 'FAIL'
+        assert json.loads(second.read_bytes().decode('ascii'))['run_ids'] == ['r2']
+
+    def test_the_run_failed_line_carries_the_label(self, tmp_path, monkeypatch) -> None:
+        from qrc_thresher import deploy
+
+        cfg_path = _tiny(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(deploy, 'fit_and_score', TestFailedRowsKeepTheirTask._boom)
+        result = CliRunner().invoke(cli, ['run', 'stm', '--config', str(cfg_path)])
+        assert result.exit_code == 1, result.output
+        failed = [line for line in result.output.splitlines() if 'FAILED' in line]
+        assert failed, result.output
+        assert all(f'[measurement: {EXACT}]' in line for line in failed), result.output
+
+
 class TestG07TopLevelKeys:
     """CP5a ruling 7: every G0.7 JSON written after D018 carries top-level config_hash and
     git_commit_hash; environment and model_details are unchanged. Ruling 12a: LF endings."""

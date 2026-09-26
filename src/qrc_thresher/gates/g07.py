@@ -435,18 +435,27 @@ def evaluate(
     }
 
 
-def write_report(result: dict, out_dir: Optional[Path] = None) -> Dict[str, Path]:
+def write_report(
+    result: dict, out_dir: Optional[Path] = None, *, config_path: Optional[Path] = None
+) -> Dict[str, Path]:
     """Write a new gate JSON and forgetting-curve figure; never overwrite earlier ones.
 
     Args:
         result: Output of evaluate().
         out_dir: Directory for the report. Defaults to results/gates.
+        config_path: The --config file; its canonical hash is written as the top-level
+            ``config_hash`` (null when not given).
 
     Returns:
         {'json': path, 'figure': path}.
+
+    The JSON is the result plus ``figure``, and (D018, CP5a ruling 7) the top-level
+    ``config_hash`` and ``git_commit_hash`` (equal to environment.git_commit_hash); the
+    ``environment`` and ``model_details`` blocks are unchanged. Written with LF line endings.
     """
     import matplotlib.pyplot as plt
 
+    from qrc_thresher.proof.run_manifest import _config_hash
     from qrc_thresher.viz.plots import plot_forgetting_curve
 
     out_dir = Path(out_dir) if out_dir is not None else Path('results') / 'gates'
@@ -470,7 +479,14 @@ def write_report(result: dict, out_dir: Optional[Path] = None) -> Dict[str, Path
 
     payload = copy.deepcopy(result)
     payload['figure'] = figure_path.name
-    with json_path.open('x', encoding='utf-8') as f:
+    payload['config_hash'] = _config_hash(Path(config_path)) if config_path is not None else None
+    if config_path is None:
+        payload['config_hash_reason'] = 'no --config given'
+    elif payload['config_hash'] == 'unknown':
+        payload['config_hash'] = None
+        payload['config_hash_reason'] = f'config file {Path(config_path).as_posix()} not found'
+    payload['git_commit_hash'] = (payload.get('environment') or {}).get('git_commit_hash')
+    with json_path.open('x', encoding='utf-8', newline='\n') as f:
         json.dump(payload, f, indent=2, allow_nan=False)
     return {'json': json_path, 'figure': figure_path}
 

@@ -406,7 +406,8 @@ def tune_config(
     record['record_sha256'] = record_sha256(record)
     path = record_path(record['config_hash'], task)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, indent=2, allow_nan=False), encoding='utf-8')
+    with path.open('w', encoding='utf-8', newline='\n') as f:  # LF on every platform (D018)
+        f.write(json.dumps(record, indent=2, allow_nan=False))
     logger.info('tuning record written to %s', path)
     return record
 
@@ -464,7 +465,7 @@ def tune_handler(task: Optional[str], config_path: str) -> int:
     Without TASK, the three tasks are tuned in one invocation under one sweep_id (item B6);
     with TASK, that record alone is (re)written under its own stamp.
     """
-    from qrc_thresher.config import load_config
+    from qrc_thresher.config import load_config, measurement_label
 
     cfg_path = Path(config_path)
     cfg = load_config(cfg_path)
@@ -473,6 +474,8 @@ def tune_handler(task: Optional[str], config_path: str) -> int:
         path = record_path(record['config_hash'], name)
         print(f'tuning record: {path.as_posix()} (sweep {record["sweep_id"]})')
         for model in MODELS:
+            label = measurement_label(cfg.measurement.model if model == 'qrc' else 'classical')
+            print(f'  {model} [measurement: {label}]')
             for key, entry in record[model].items():
                 chosen = {k: entry[k] for k in HYPERPARAMETERS[model]}
                 print(f'  {model} {key}: {chosen} ({entry["n_configs"]} configurations, '

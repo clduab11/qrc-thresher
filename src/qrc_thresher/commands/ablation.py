@@ -65,6 +65,7 @@ def ablation_handler(
 
 def _run_one(cfg, cfg_path: Path, name: str, task: str, task_seed: int, reservoir_seed: int,
              deployments: List) -> List:
+    from qrc_thresher.config import measurement_label
     from qrc_thresher.deploy import fit_and_score
     from qrc_thresher.metrics.runtime import StageTimer
     from qrc_thresher.proof.run_manifest import (
@@ -72,7 +73,7 @@ def _run_one(cfg, cfg_path: Path, name: str, task: str, task_seed: int, reservoi
         create_manifest,
         update_cumulative_compute,
     )
-    from qrc_thresher.task_names import ablation_task_name
+    from qrc_thresher.task_names import ablation_task_name, task_metric
     from qrc_thresher.tuning import task_data
 
     timer = StageTimer()
@@ -91,7 +92,8 @@ def _run_one(cfg, cfg_path: Path, name: str, task: str, task_seed: int, reservoi
                 metric_name, value, secondary, _, _ = fit_and_score(X, ds, task, cfg)
             print(
                 f'Ablation "{name}" seeds {task_seed}/{reservoir_seed} {task} '
-                f'[{dep.details.get("default_label", dep.design)}] {metric_name}: {value:.4f}'
+                f'[{dep.details.get("default_label", dep.design)}] {metric_name}: {value:.4f} '
+                f'[measurement: {measurement_label(cfg.measurement.model)}]'
             )
             success = True
         except Exception as exc:
@@ -111,7 +113,8 @@ def _run_one(cfg, cfg_path: Path, name: str, task: str, task_seed: int, reservoi
             failure_reason=failure_reason,
             artifact_paths=[],
             task_name=ablation_task_name(name),
-            primary_metric_name=metric_name if success else '',
+            # A failed row keeps its task's metric name and an empty value (D019, CP5a ruling 5).
+            primary_metric_name=metric_name if success else task_metric(task),
             primary_metric_value=value if success else None,
             measurement_model=cfg.measurement.model,
             n_configs=1,

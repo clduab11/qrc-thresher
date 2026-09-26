@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 _RUNS_CSV = Path('results') / 'runs.csv'
 _COMPUTE_JSON = Path('results') / 'cumulative_compute.json'
+# The repository root: a manifest's config_path is recorded relative to it when the config lies
+# under it (D018, CP5a ruling 12c). Tests monkeypatch this instead of writing under the repo.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _WATTS_PER_RUN = 15.0  # documented constant: estimated CPU power draw per run (watts)
 
 SCHEMA_VERSION = '1.4'
@@ -253,11 +256,26 @@ def _platform_string() -> str:
 
 
 def _cli_command() -> str:
-    """Reconstruct the CLI invocation from sys.argv (best-effort)."""
+    """The CLI invocation: the program's basename plus its arguments (best-effort).
+
+    Only ``Path(sys.argv[0]).name`` is recorded, never the absolute program path, so the value
+    carries no local path (D018, CP5a ruling 12b).
+    """
     try:
-        return ' '.join(sys.argv)
+        if not sys.argv:
+            return 'unknown'
+        return ' '.join([Path(sys.argv[0]).name, *sys.argv[1:]])
     except Exception:
         return 'unknown'
+
+
+def _recorded_config_path(config_path: Path) -> str:
+    """POSIX path relative to the repository root when the config lies under it, else as given
+    (D018, CP5a ruling 12c)."""
+    try:
+        return Path(config_path).resolve().relative_to(_REPO_ROOT.resolve()).as_posix()
+    except (ValueError, OSError):
+        return str(config_path)
 
 
 def create_manifest(
@@ -289,7 +307,8 @@ def create_manifest(
         circuit_hash: SHA-256 of circuit parameters.
         task_seed: Integer task seed.
         reservoir_seed: Integer reservoir seed.
-        backend_device: PennyLane device string.
+        backend_device: The device the features came from: a PennyLane device string for QRC
+            rows ('default.qubit'), 'numpy_esn' or 'numpy_rks' for the classical baselines.
         runtime_per_stage_seconds: Per-stage timing dict.
         entanglement_metric: Partial-transpose log-negativity (or None).
         success: Whether the run succeeded.
@@ -297,11 +316,12 @@ def create_manifest(
         artifact_paths: Relative paths to result artifacts.
         task_name: Task identifier (e.g. 'stm', 'parity', 'narma',
             'ablation:no_entangle'). Used by gate evaluators.
-        primary_metric_name: Name of the run's primary metric (e.g. 'mc',
-            'accuracy', 'nrmse'). Empty when not applicable.
+        primary_metric_name: Name of the run's primary metric ('stm_memory', 'accuracy',
+            'nrmse'). A failed row keeps its task's metric name (D019, CP5a ruling 5).
         primary_metric_value: Value of the primary metric, if computed.
         measurement_model: Measurement model the run's features were computed
-            under (config field measurement.model). 'exact' is an oracle upper bound.
+            under (config field measurement.model). 'exact' is an oracle upper bound;
+            'classical' marks an ESN or RKS row, whose states are read at no cost (D018).
         n_configs: Model hyperparameter configurations evaluated before this run was
             deployed (1 when nothing was searched).
         n_validation_evals: Configuration x validation-block evaluations used to choose
@@ -337,7 +357,7 @@ def create_manifest(
         timestamp_utc=datetime.now(timezone.utc).isoformat(),
         git_commit_hash=_git_commit_hash(),
         git_branch=_git_branch(),
-        config_path=str(config_path),
+        config_path=_recorded_config_path(config_path),
         config_hash=_config_hash(config_path),
         circuit_hash=circuit_hash,
         task_seed=task_seed,

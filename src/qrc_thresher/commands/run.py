@@ -33,7 +33,7 @@ def run_handler(
     nothing; CP4b.1 items A1, A4). A runs.csv that cannot be written exits 1 naming the path
     (item A3); nothing is left in experiments.db for that row.
     """
-    from qrc_thresher.config import load_config
+    from qrc_thresher.config import load_config, measurement_label
     from qrc_thresher.db import ExperimentDB
     from qrc_thresher.deploy import resolve_deployments
     from qrc_thresher.engine import run_pair
@@ -67,12 +67,14 @@ def run_handler(
             if manifest.success:
                 print(
                     f'{task} seeds {task_seed}/{reservoir_seed} [{manifest.design}] '
-                    f'{manifest.primary_metric_name}: {manifest.primary_metric_value:.4f}'
+                    f'{manifest.primary_metric_name}: {manifest.primary_metric_value:.4f} '
+                    f'[measurement: {measurement_label(manifest.measurement_model)}]'
                 )
             else:
                 all_ok = False
                 print(f'{task} seeds {task_seed}/{reservoir_seed} FAILED: '
-                      f'{manifest.failure_reason}')
+                      f'{manifest.failure_reason}'
+                      f' [measurement: {measurement_label(manifest.measurement_model)}]')
             try:
                 db = ExperimentDB()
                 try:
@@ -144,7 +146,7 @@ def run_parallel_handler(
     design_task: Optional[str] = None,
 ) -> int:
     """Handle parallel run command. Returns exit code."""
-    from qrc_thresher.config import load_config
+    from qrc_thresher.config import load_config, measurement_label
     from qrc_thresher.engine import ParallelRunner
 
     cfg_path = Path(config_path)
@@ -170,6 +172,7 @@ def run_parallel_handler(
 
     n_total = len(manifests)
     n_success = sum(1 for m in manifests if m.success)
-    print(f'Parallel run complete: {n_success}/{n_total} successful (workers={workers})')
+    print(f'Parallel run complete: {n_success}/{n_total} successful (workers={workers}) '
+          f'[measurement: {measurement_label(cfg.measurement.model)}]')
 
     return 0 if n_success == n_total else 1

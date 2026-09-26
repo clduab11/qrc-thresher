@@ -24,18 +24,19 @@ from typing import List, Optional
 import filelock
 import numpy as np
 
-from qrc_thresher.config import AlphaLiteConfig, load_config
+from qrc_thresher.config import AlphaLiteConfig, load_config, measurement_label
 from qrc_thresher.proof.run_manifest import (
     RunManifest,
     append_to_csv,
     create_manifest,
     update_cumulative_compute,
 )
-from qrc_thresher.task_names import TASKS, baseline_task_name
+from qrc_thresher.task_names import TASKS, baseline_task_name, task_metric
 
 logger = logging.getLogger(__name__)
 
-_NOT_IN_RUN_PATH = {'gru': 'the GRU baseline is a stub (defect D20)'}
+_NOT_IN_RUN_PATH: dict = {}  # every enabled baseline has a run path (the GRU stub left; D018)
+CLASSICAL_MODEL = 'classical'  # the measurement_model of every classical row (D018)
 _RUNS_CSV = Path('results') / 'runs.csv'
 _ARTIFACT_DIR = Path('results') / 'artifacts' / 'baselines'
 DEFAULT_ESN_PRESET = 'esn_nonlinear'  # the untuned ESN default (D011)
@@ -103,7 +104,8 @@ def baseline_handler(task: str, config_path: str, design: str = 'tuned') -> int:
         print(f'baseline {task}: aborted; {exc}')
         return 1
     n_ok = sum(1 for m in manifests if m.success)
-    print(f'Baseline run ({task}): {n_ok}/{len(manifests)} successful')
+    print(f'Baseline run ({task}): {n_ok}/{len(manifests)} successful '
+          f'[measurement: {measurement_label(CLASSICAL_MODEL)}]')
     for m in manifests:
         value = m.primary_metric_value
         shown = f'{value:.4f}' if value is not None else m.failure_reason
@@ -127,9 +129,10 @@ def _finish(cfg, task, task_seed, reservoir_seed, config_path, *, task_name, bac
         failure_reason=failure,
         artifact_paths=[],
         task_name=task_name,
-        primary_metric_name=metric_name if failure is None else '',
+        # A failed row keeps its task's metric name and an empty value (D019, CP5a ruling 5).
+        primary_metric_name=metric_name if failure is None else task_metric(task),
         primary_metric_value=value,
-        measurement_model=cfg.measurement.model,
+        measurement_model=CLASSICAL_MODEL,  # ESN and RKS states are read exactly (D018)
         n_configs=n_configs,
         n_validation_evals=n_evals,
         secondary_metrics=secondary if failure is None else {},
