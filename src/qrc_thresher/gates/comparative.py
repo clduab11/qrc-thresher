@@ -27,12 +27,13 @@ from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import pandas as pd
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from qrc_thresher.config import measurement_label
-from qrc_thresher.metrics.paired import PairedComparison, compare_arms
+from qrc_thresher.config import MEASUREMENT_LABELS, measurement_label
+from qrc_thresher.metrics.paired import PairedComparison, collapse_exact_reruns, compare_arms
 from qrc_thresher.metrics.stats import holm_bonferroni
 from qrc_thresher.task_names import (
+    TASKS,
     ablation_task_name,
     parse_task_name,
     qrc_task_name,
@@ -45,6 +46,8 @@ MEMBERS = ('G1', 'G2', 'G2.5', 'G3', 'G4')
 PROTOCOL_FILE = Path('configs') / 'gates' / 'COMPARATIVE.v1.yaml'
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 INSUFFICIENT = 'INSUFFICIENT_EVIDENCE'
+CLASSICAL_LABEL = MEASUREMENT_LABELS['classical']  # D018; one label table (CP5b ruling C1)
+DEFAULT_DESIGNS = ('default', 'default_w1')
 Pair = Tuple[int, int]
 
 
@@ -186,6 +189,14 @@ class Designs:
     tuned: Dict[str, Dict[Pair, str]]
     default: Dict[str, Dict[Pair, str]] = field(default_factory=dict)
     ablation_hash: Callable[[str, str, Pair], str] = None  # type: ignore[assignment]
+    ablated_cache: Dict[Tuple[str, str, Pair], str] = field(default_factory=dict, repr=False)
+
+    def ablated(self, design_hash: str, name: str, pair: Pair) -> str:
+        """``ablation_hash`` memoised by (parent hash, ablation, pair) (D019, item A.3)."""
+        key = (design_hash, name, pair)
+        if key not in self.ablated_cache:
+            self.ablated_cache[key] = self.ablation_hash(design_hash, name, pair)
+        return self.ablated_cache[key]
 
 
 def designs_from_records(cfg, records: Dict[str, dict]) -> Designs:
@@ -303,20 +314,52 @@ def _floor(spec: Optional[FloorSpec], comparison: PairedComparison) -> Optional[
 
 
 def _mean_report(rows: pd.DataFrame, design: str, task_name: str) -> dict:
-    values = pd.to_numeric(rows['primary_metric_value'], errors='coerce').dropna()
+    """The reported (never gated) mean of one design's rows, one row per pair (D019, item A.1).
+
+    Keys, in order: design, task_name, n_rows (one per pair), mean, std (pandas mean and std
+    with ddof=1 over the pairs in ascending order), then status ('OK' or INSUFFICIENT_EVIDENCE),
+    reason, n_rows_in (the rows before collapsing), pairs, run_ids (per pair) and
+    circuit_hashes (per pair). A duplicate that is not an exact rerun, or an empty arm, gives
+    INSUFFICIENT_EVIDENCE with n_rows 0, mean and std None and empty lists. Never raises.
+    """
+    n_in = int(len(rows))
+    refused = {'n_rows': 0, 'mean': None, 'std': None, 'status': INSUFFICIENT}
+    base = {'design': design, 'task_name': task_name}
+    empty = {'pairs': [], 'run_ids': [], 'circuit_hashes': []}
+    if n_in == 0:
+        return {**base, **refused, 'reason': 'no rows', 'n_rows_in': 0, **empty}
+    collapsed, ids, reason = collapse_exact_reruns(rows, design)
+    if collapsed is None:
+        return {**base, **refused, 'reason': reason, 'n_rows_in': n_in, **empty}
+    pairs = sorted(collapsed)
+    values = pd.to_numeric(
+        pd.Series([collapsed[p]['primary_metric_value'] for p in pairs]), errors='coerce'
+    ).dropna()
     n = int(len(values))
     return {
-        'design': design,
-        'task_name': task_name,
+        **base,
         'n_rows': n,
         'mean': float(values.mean()) if n else None,
         'std': float(values.std(ddof=1)) if n > 1 else (0.0 if n == 1 else None),
+        'status': 'OK',
+        'reason': None,
+        'n_rows_in': n_in,
+        'pairs': [list(p) for p in pairs],
+        'run_ids': [list(ids[p]) for p in pairs],
+        'circuit_hashes': [str(collapsed[p]['circuit_hash']) for p in pairs],
     }
 
 
 def _mc_k0_mean(rows: pd.DataFrame) -> Optional[float]:
+    """Mean mc_k0 over one row per pair, in ascending pair order; None if the arm is refused."""
+    if 'secondary_metrics' not in rows or len(rows) == 0:
+        return None
+    collapsed, _, reason = collapse_exact_reruns(rows, 'mc_k0')
+    if collapsed is None:
+        return None
     values = []
-    for text in rows['secondary_metrics'].tolist() if 'secondary_metrics' in rows else []:
+    for pair in sorted(collapsed):
+        text = collapsed[pair]['secondary_metrics']
         try:
             value = json.loads(text) if isinstance(text, str) else (text or {})
         except (TypeError, ValueError):
@@ -484,6 +527,7 @@ def evaluate_family(
 
         entry.update({
             'comparison': comparison.to_dict(),
+            'measurement_labels': arm_labels(spec.baseline, measurement_model),
             'n_pairs': comparison.n_pairs,
             'raw_p': p,
             'floor': floor,
@@ -533,6 +577,14 @@ def evaluate_family(
     }
 
 
+def arm_labels(baseline: str, measurement_model: str) -> Dict[str, str]:
+    """D018 (CP5a ruling 8): a is the QRC arm, b the comparator, labelled by kind and never by
+    the rows' measurement_model (rows written before D018 say 'exact' on classical arms)."""
+    qrc = measurement_label(measurement_model)
+    kind = parse_task_name(baseline)['kind']
+    return {'a': qrc, 'b': CLASSICAL_LABEL if kind == 'baseline' else qrc}
+
+
 def _fail_message(member: dict, alpha: float) -> str:
     parts = []
     if member['adjusted_p'] > alpha:
@@ -563,7 +615,7 @@ def write_family_report(result: dict, out_dir: Optional[Path] = None) -> Dict[st
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     family_path = _fresh(out_dir, f'{FAMILY_NAME}.v{result["version"]}.{stamp}')
     text = json.dumps(result, indent=2, allow_nan=False)
-    with family_path.open('x', encoding='utf-8') as f:
+    with family_path.open('x', encoding='utf-8', newline='\n') as f:  # LF (D018, ruling 12a)
         f.write(text)
     family_sha = hashlib.sha256(family_path.read_bytes()).hexdigest()
     paths = {'family': family_path}
@@ -577,7 +629,7 @@ def write_family_report(result: dict, out_dir: Optional[Path] = None) -> Dict[st
         gate_path = _fresh(out_dir, f'{safe}.{stamp}')
         view = {**result['members'][name], **provenance,
                 'family_json': family_path.as_posix(), 'family_sha256': family_sha}
-        with gate_path.open('x', encoding='utf-8') as f:
+        with gate_path.open('x', encoding='utf-8', newline='\n') as f:
             json.dump(view, f, indent=2, allow_nan=False)
         paths[name] = gate_path
     return paths
@@ -596,6 +648,119 @@ def newest_g07_tuned(gates_dir: Path) -> Optional[dict]:
         'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
         'model_details': data.get('model_details') or {},
     }
+
+
+def read_runs_csv(path: Path) -> pd.DataFrame:
+    """The one runs.csv reader (D019, item A.6), with the parse pinned.
+
+    keep_default_na=False, so every text column reads as written; str dtype for sweep_id,
+    tuning_record_sha, circuit_hash and config_hash; na_values for primary_metric_value alone,
+    so that a failed row's empty value reads as NaN and the column stays float64 whatever other
+    rows the file holds; pandas' default float parser, with no float_precision (the parser that
+    produced the run-4 record; D019 discloses it).
+    """
+    return pd.read_csv(
+        Path(path), keep_default_na=False,
+        dtype={'sweep_id': str, 'tuning_record_sha': str, 'circuit_hash': str, 'config_hash': str},
+        na_values={'primary_metric_value': ['']},
+    )
+
+
+def resolve_config(
+    config_hash: str, config_path: Optional[Path] = None
+) -> Tuple[Optional[Designs], Dict[str, str], Optional[str]]:
+    """The verified tuning records and config of a config_hash (D019, item A.3).
+
+    Loads results/tuning/<config_hash>/{stm,parity,narma}.json (``tuning.record_path``) and
+    verifies each with ``tuning.record_sha256``; loads the config from ``config_path`` or else
+    from the records' relative config_path, using it only if its canonical hash equals
+    ``config_hash``; then builds the designs.
+
+    Returns:
+        (designs or None, {record_sha256: task}, reason or None).
+    """
+    from qrc_thresher.config import load_config
+    from qrc_thresher.proof.run_manifest import _config_hash
+    from qrc_thresher.tuning import record_path, record_sha256
+
+    records: Dict[str, dict] = {}
+    for task in TASKS:
+        path = record_path(config_hash, task)
+        if not path.exists():
+            return None, {}, f'no tuning record at {path.as_posix()}'
+        try:
+            record = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            return None, {}, f'tuning record {path.as_posix()} is unreadable: {exc}'
+        if record_sha256(record) != record.get('record_sha256'):
+            return None, {}, f'tuning record {path.as_posix()} does not match its record_sha256'
+        records[task] = record
+    candidates = [Path(config_path)] if config_path is not None else []
+    for r in records.values():
+        recorded = r.get('config_path')
+        if isinstance(recorded, str) and recorded.strip():
+            candidates.append(Path(recorded))
+
+    def _hash_of(path: Path) -> Optional[str]:
+        try:
+            return _config_hash(path)
+        except (OSError, ValueError, yaml.YAMLError, ValidationError):
+            return None
+
+    cfg_path = next((c for c in candidates if c.is_file()
+                     and _hash_of(c) == str(config_hash)), None)
+    if cfg_path is None:
+        return None, {}, (f'no config file whose canonical hash is {str(config_hash)[:8]}... '
+                          f'(tried {[c.as_posix() for c in candidates]})')
+    try:
+        designs = designs_from_records(load_config(cfg_path), records)
+    except (OSError, ValueError, yaml.YAMLError, ValidationError) as exc:
+        return None, {}, f'config {cfg_path.as_posix()} does not load: {exc}'
+    return designs, {str(r['record_sha256']): task for task, r in records.items()}, None
+
+
+def deployment_label(
+    row: pd.Series, designs: Optional[Designs], record_task: Dict[str, str]
+) -> str:
+    """The deployment a row came from, read from its circuit_hash (D019, item A.3).
+
+    default / default_w1 QRC rows and rows with an empty sweep_id are labelled by their design;
+    baseline rows 'tuned' or 'default'; a tuned QRC row 'tuned:design_<t>' for the task t whose
+    record deployed it (kept only if the hash is that design's for the pair); an inherited
+    ablation row 'inherited:<parent>' where the parent is whichever of design_<t> (the deploying
+    record's task), default and default_w1 has the matching ablated hash for the pair, joined
+    with '=' only when more than one matches (never a search over other tasks' designs);
+    anything else '<design>:unresolved'. Task names are parsed only through parse_task_name.
+    """
+    design = str(row['design'])
+    if design in DEFAULT_DESIGNS or str(row.get('sweep_id', '') or '') == '':
+        return design
+    try:
+        parsed = parse_task_name(str(row['task_name']))
+    except ValueError:
+        return f'{design}:unresolved'
+    if parsed['kind'] == 'baseline':
+        return design
+    if designs is None:
+        return f'{design}:unresolved'
+    pair = (int(row['task_seed']), int(row['reservoir_seed']))
+    circuit_hash = str(row['circuit_hash'])
+    task = record_task.get(str(row.get('tuning_record_sha', '') or ''))
+    if design == 'tuned' and parsed['kind'] == 'qrc':
+        if task is not None and designs.tuned.get(task, {}).get(pair) == circuit_hash:
+            return f'tuned:design_{task}'
+        return 'tuned:unresolved'
+    if design == 'inherited' and parsed['kind'] == 'ablation':
+        candidates: List[Tuple[str, str]] = []
+        if task is not None and pair in designs.tuned.get(task, {}):
+            candidates.append((f'design_{task}', designs.tuned[task][pair]))
+        for label in DEFAULT_DESIGNS:
+            if pair in designs.default.get(label, {}):
+                candidates.append((label, designs.default[label][pair]))
+        matches = [name for name, parent in candidates
+                   if designs.ablated(parent, parsed['model'], pair) == circuit_hash]
+        return 'inherited:' + '='.join(matches) if matches else 'inherited:unresolved'
+    return f'{design}:unresolved'
 
 
 def evaluate_config(
@@ -622,10 +787,7 @@ def evaluate_config(
             return None, str(exc)
     if not Path(runs_csv).exists():
         return None, f'no runs.csv at {Path(runs_csv).as_posix()}; run the sweep first'
-    runs = pd.read_csv(
-        runs_csv, keep_default_na=False,
-        dtype={'sweep_id': str, 'tuning_record_sha': str, 'circuit_hash': str, 'config_hash': str},
-    )
+    runs = read_runs_csv(runs_csv)
     protocol = load_protocol()
     designs = designs_from_records(cfg, records)
     sweeps = {task: r['sweep_id'] for task, r in records.items()}
@@ -651,6 +813,7 @@ __all__ = [
     'MEMBERS',
     'PROTOCOL_FILE',
     'comparator_arm',
+    'deployment_label',
     'designs_from_records',
     'evaluate_config',
     'evaluate_family',
@@ -658,5 +821,7 @@ __all__ = [
     'newest_g07_tuned',
     'protocol_sha256',
     'qrc_arm',
+    'read_runs_csv',
+    'resolve_config',
     'write_family_report',
 ]

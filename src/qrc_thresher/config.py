@@ -144,6 +144,9 @@ class ProofConfig(BaseModel):
 
 MEASUREMENT_LABELS: Dict[str, str] = {
     'exact': 'exact (oracle upper bound)',
+    # Classical rows (ESN, RKS) read their states exactly at no measurement cost (D018). A
+    # manifest and report value only: MeasurementConfig stays Literal['exact'].
+    'classical': 'classical, no measurement cost',
 }
 
 

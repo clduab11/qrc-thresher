@@ -10,7 +10,9 @@ Per comparison: the mean difference (arm A minus arm B), the paired t-test one-s
 registered direction (and two-sided), the Wilcoxon signed-rank test with the same alternative
 (zero_method wilcox, exact when there are no ties among the non-zero |differences|, approx
 otherwise, effective n reported), a 95% BCa bootstrap CI of the mean difference (B = 2000, rng
-seed 20260923) and d_z (None at zero variance). Every result serialises with allow_nan=False.
+seed 20260923) and d_z (None at zero variance). An OK comparison also names its rows: the
+run_ids and circuit_hash of each arm per pair, and the sorted union of run_ids (D019, item A.2).
+Every result serialises with allow_nan=False.
 """
 
 from __future__ import annotations
@@ -154,6 +156,14 @@ class PairedComparison:
     d_z: Optional[float] = None
     budgets_a: List[List[int]] = field(default_factory=list)
     budgets_b: List[List[int]] = field(default_factory=list)
+    # The rows behind the statistics (D019, item A.2): one list of run_ids per pair (an exact
+    # rerun lists every id), one circuit_hash per pair, and the sorted distinct union. Empty
+    # unless status is 'OK'.
+    run_ids_a: List[List[str]] = field(default_factory=list)
+    run_ids_b: List[List[str]] = field(default_factory=list)
+    circuit_hashes_a: List[str] = field(default_factory=list)
+    circuit_hashes_b: List[str] = field(default_factory=list)
+    run_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """JSON-ready dict; serialises with allow_nan=False."""
@@ -175,29 +185,52 @@ def _single(frame: pd.DataFrame, column: str) -> Optional[str]:
     return values[0] if len(values) == 1 else None
 
 
-def _collapse(
+def collapse_exact_reruns(
     arm: pd.DataFrame, label: str
-) -> Tuple[Optional[Dict[Pair, pd.Series]], Optional[str]]:
-    """One row per pair; exact reruns (same circuit_hash and value) collapse, others are refused."""
+) -> Tuple[Optional[Dict[Pair, pd.Series]], Dict[Pair, List[str]], Optional[str]]:
+    """One row per pair under the registered duplicate rule (COMPARATIVE.v1; D019, item A.1).
+
+    Rows of one pair collapse only when both circuit_hash and value are equal (an exact rerun);
+    the row kept is the one with the smallest ``str(run_id)``, so the choice never depends on
+    row order. Any other duplicate refuses the arm.
+
+    Returns:
+        (rows_by_pair or None, run_ids_by_pair, reason or None): the kept row per pair, the
+        sorted distinct run_ids of every pair (filled even when refused), and the refusal text
+        naming the pairs concerned.
+    """
     rows: Dict[Pair, pd.Series] = {}
+    run_ids: Dict[Pair, set] = {}
     refused: List[Pair] = []
     for _, row in arm.iterrows():
         pair = (int(row['task_seed']), int(row['reservoir_seed']))
+        run_id = _run_id(row)
         if pair in rows:
             first = rows[pair]
             same = str(first['circuit_hash']) == str(row['circuit_hash']) and _same_value(
                 first['primary_metric_value'], row['primary_metric_value']
             )
+            run_ids[pair].add(run_id)
             if not same:
-                refused.append(pair)
+                if pair not in refused:
+                    refused.append(pair)
+                continue
+            if run_id < _run_id(first):
+                rows[pair] = row
             continue
         rows[pair] = row
+        run_ids[pair] = {run_id}
+    ids = {pair: sorted(v) for pair, v in run_ids.items()}
     if refused:
-        return None, (
+        return None, ids, (
             f'arm {label} has more than one candidate row for pair(s) {_pairs_text(refused)} '
             'that are not exact reruns (same circuit_hash and value); refused, not chosen'
         )
-    return rows, None
+    return rows, ids, None
+
+
+def _run_id(row: pd.Series) -> str:
+    return str(row['run_id']) if 'run_id' in row.index else ''
 
 
 def _same_value(x, y) -> bool:
@@ -302,10 +335,10 @@ def compare_arms(
                 f'registered {metric!r}', **common
             )
 
-    rows_a, reason = _collapse(arm_a, 'A')
+    rows_a, ids_a, reason = collapse_exact_reruns(arm_a, 'A')
     if reason:
         return _insufficient(reason, **common)
-    rows_b, reason = _collapse(arm_b, 'B')
+    rows_b, ids_b, reason = collapse_exact_reruns(arm_b, 'B')
     if reason:
         return _insufficient(reason, **common)
 
@@ -368,6 +401,8 @@ def compare_arms(
     statistics = paired_statistics(
         values_a, values_b, direction, n_resamples=n_resamples, rng_seed=rng_seed
     )
+    run_ids_a = [list(ids_a[pair]) for pair in pairs]
+    run_ids_b = [list(ids_b[pair]) for pair in pairs]
     return PairedComparison(
         status='OK',
         reason=None,
@@ -376,6 +411,11 @@ def compare_arms(
         values_b=values_b,
         budgets_a=budgets_a,
         budgets_b=budgets_b,
+        run_ids_a=run_ids_a,
+        run_ids_b=run_ids_b,
+        circuit_hashes_a=[str(rows_a[pair]['circuit_hash']) for pair in pairs],
+        circuit_hashes_b=[str(rows_b[pair]['circuit_hash']) for pair in pairs],
+        run_ids=sorted({rid for ids in run_ids_a + run_ids_b for rid in ids}),
         **common,
         **{k: v for k, v in statistics.items() if k not in ('direction',)},
     )
@@ -390,6 +430,7 @@ __all__ = [
     'MATCH_RULES',
     'MIN_PAIRS',
     'PairedComparison',
+    'collapse_exact_reruns',
     'compare_arms',
     'paired_statistics',
 ]
