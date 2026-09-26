@@ -289,6 +289,9 @@ class TestTaskOfMetric:
 
 class TestReadRunsCsv:
     METRIC_TEXT = ['1.8106150706836674', '0.1', '2.9073000000000002', '1.5']
+    DIGITS = '20260923120000'  # digits only: without A.6's dtype pin it parses as a number
+    HEX_DIGITS = {'circuit_hash': '1' * 64, 'config_hash': '2' * 64,
+                  'tuning_record_sha': '3' * 64}
 
     def _write(self, path, rows) -> None:
         with path.open('w', newline='', encoding='utf-8') as f:
@@ -299,10 +302,12 @@ class TestReadRunsCsv:
 
     def test_an_empty_value_reads_as_nan_and_the_column_stays_float64(self, tmp_path) -> None:
         fam = _comparative()
-        good = [row('stm', PAIRS[i], text, metric='stm_memory', circuit_hash='a' * 64)
+        good = [row('stm', PAIRS[i], text, metric='stm_memory', sweep_id=self.DIGITS,
+                    **self.HEX_DIGITS)
                 for i, text in enumerate(self.METRIC_TEXT)]
-        failed = row('stm', PAIRS[5], None, metric='', circuit_hash='b' * 64, success=False,
-                     config_hash='c' * 64)
+        failed = row('stm', PAIRS[5], None, metric='', circuit_hash='4' * 64, success=False,
+                     config_hash='5' * 64, sweep_id=self.DIGITS,
+                     tuning_record_sha=self.HEX_DIGITS['tuning_record_sha'])
         with_failed, without = tmp_path / 'with.csv', tmp_path / 'without.csv'
         self._write(with_failed, good + [failed])
         self._write(without, good)
@@ -315,6 +320,7 @@ class TestReadRunsCsv:
         assert a['primary_metric_value'].to_numpy()[:-1].tobytes() == \
             b['primary_metric_value'].to_numpy().tobytes()
         for column in ('sweep_id', 'tuning_record_sha', 'circuit_hash', 'config_hash'):
-            assert a[column].dtype == object and all(isinstance(v, str) for v in a[column])
+            assert pd.api.types.is_string_dtype(a[column].dtype), column
+            assert all(isinstance(v, str) for v in a[column]), column
         assert a['primary_metric_name'].iloc[-1] == ''  # keep_default_na=False elsewhere
         assert a['failure_reason'].iloc[0] == ''

@@ -8,8 +8,11 @@ the recorded ones, the run-3 duplicates collapse, a differing duplicate refuses 
 `deployment_label` splits the rows into 28 groups, and an unrelated failed row changes nothing.
 
 The folder's own configs/comparative.yaml copy is used, never the live configs/ file. Exactness
-is required under the locked environment (uv.lock): the Haar ablation's circuit_hash depends on
-the numpy and scipy build (D019). The module fails, and does not skip, when the folder is missing.
+is defined on run 4's reference platform (Windows x86-64, uv.lock at 8ed2df4, OpenBLAS Haswell
+kernel; D020, CP5b ruling 2): the Haar ablation's unitaries and the last bits of scipy's t tail
+depend on the build, so TestReDerivation checks two canaries first and fails, never skips, on any
+other platform, naming D020; TestHashes runs everywhere. The module fails, and does not skip, when
+the folder is missing.
 """
 
 from __future__ import annotations
@@ -53,6 +56,25 @@ def _require_locked_versions() -> None:
                     f'uv.lock at 8ed2df4 (numpy {LOCKED["numpy"]}, scipy {LOCKED["scipy"]}; '
                     f'D019, platform note); found numpy {found["numpy"]}, scipy '
                     f'{found["scipy"]}')
+
+
+REFERENCE = {'haar': '634a0953602989c3bd14857ca324c8a6fb96137cf4d8014fb3e493787e1e4fb4',
+             't_sf': '0.0009661687007813959'}  # run 4's reference platform (D020, CP5b ruling 2)
+
+
+def _require_reference_platform() -> None:
+    """Fail, never skip, unless this platform reproduces run 4's Haar unitaries and t tail."""
+    import scipy.stats
+
+    from qrc_thresher.reservoirs import windowed_qrc
+
+    found = {'haar': windowed_qrc._unitaries_digest(windowed_qrc.haar_layer_unitaries(4, 3, 137)),
+             't_sf': repr(float(scipy.stats.t.sf(4.0448803987937705, 11)))}
+    if found != REFERENCE:
+        pytest.fail("run 4's exact re-derivation is defined on its reference platform (Windows "
+                    'x86-64, uv.lock at 8ed2df4, OpenBLAS Haswell kernel; D020, CP5b ruling 2); '
+                    "this platform's Haar unitaries or t tail differ in the last bits: found "
+                    f"{found['haar']}, {found['t_sf']}")
 
 
 def _leaves(obj, prefix=()) -> dict:
@@ -204,6 +226,10 @@ class TestHashes:
 
 
 class TestReDerivation:
+    @pytest.fixture(scope='class', autouse=True)
+    def _reference_platform(self):
+        _require_reference_platform()
+
     def test_every_recorded_leaf_comes_back_exactly(self, evidence) -> None:
         changed = _assert_same_leaves(evidence['family'], evidence['result'])
         assert changed == {}
