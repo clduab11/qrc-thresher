@@ -1,0 +1,74 @@
+# Comparative sweep: the one config every arm of the family runs from (docs/DECISIONS.md D011,
+# D013, D014). Every row it writes shares this file's config_hash. Tuning is triggered by the
+# tuning block: `qrc-thresher tune TASK --config configs/comparative.yaml` writes
+# results/tuning/<config_hash>/<task>.json, and run, ablation and baseline deploy from it.
+experiment_name: comparative_phase1
+task:
+  name: stm
+  length: 500
+  train_frac: 0.7
+  delay_max: 20
+  parity_window: 3
+reservoir:
+  backend: default.qubit
+  n_qubits: 4
+  depth: 3        # the untuned default (design=default) with encoding_scale pi, at window 1 and 2
+  readout: z_only # G1b and G2.5 isolate entanglement only under z_only (D010, D014)
+  window: 1
+measurement:
+  model: exact  # exact expectation values = oracle upper bound (docs/DECISIONS.md D004)
+baseline:
+  enabled:
+    - esn
+    - random_features  # RKS with its bandwidth fix sigma / sqrt(d) (D13, D011)
+training:
+  ridge_alphas: [1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2, 1.0, 100.0]
+  cv_folds: 5
+  washout: 50  # rows [0, 50) dropped from training and tuning for every model (D012)
+tuning:
+  # 60 configurations per model (D011). Selection: 5 contiguous validation blocks of the
+  # training rows after the washout, harness readout, metric per task (stm_memory k >= 1,
+  # parity accuracy, NARMA-10 NRMSE lower is better).
+  qrc:
+    depth: [1, 2, 3, 4, 5]
+    window: [1, 2, 4]
+    encoding_scale:  # pi/4, pi/2, 3pi/4, pi; RY(scale * u)
+      - 0.7853981633974483
+      - 1.5707963267948966
+      - 2.356194490192345
+      - 3.141592653589793
+  esn:
+    spectral_radius: [0.8, 0.9, 0.95, 0.99, 1.0]
+    input_scaling: [0.1, 0.5, 1.0]
+    leak_rate: [0.1, 0.3, 0.5, 1.0]
+  rks:
+    sigma:  # numpy.logspace(-1, 1, 20); bandwidth sigma / sqrt(window)
+      - 0.1
+      - 0.12742749857031338
+      - 0.16237767391887217
+      - 0.20691380811147897
+      - 0.26366508987303583
+      - 0.33598182862837817
+      - 0.42813323987193935
+      - 0.5455594781168519
+      - 0.6951927961775606
+      - 0.8858667904100825
+      - 1.1288378916846888
+      - 1.438449888287663
+      - 1.8329807108324356
+      - 2.3357214690901213
+      - 2.9763514416313175
+      - 3.79269019073225
+      - 4.832930238571752
+      - 6.158482110660261
+      - 7.847599703514611
+      - 10.0
+    window: [1, 2, 4]
+proof:
+  log_entanglement: true
+  log_circuit_hash: true
+  log_artifacts: false
+seeds:
+  task_seed: 42
+  reservoir_seed: 137
+  n_seeds: 12  # pairs (42 + i, 137 + i), i < 12: 80% power for d_z >= 0.77 one-sided (D013)
