@@ -1380,3 +1380,66 @@ record.
 builder at CP5a).
 
 ---
+
+## 2026-09-26: D020 — Run 4's reference platform, the reader's string dtype, and a ledger addendum
+
+**Context**: The CP5b review ran the CP5 instructions' Linux check (R4) under `uv.lock` on Linux
+x86-64. Two build dependencies appeared, neither of which changes a verdict. First, the Haar
+ablation's unitaries, drawn by `scipy.stats.unitary_group`, differ in their last bits between the
+Windows host that produced run 4 and Linux (and on the host under OpenBLAS's Sandybridge kernel),
+so every Haar `circuit_hash` differs; re-deriving run 4 there leaves the Haar rows without their
+parents and G2.5 becomes INSUFFICIENT_EVIDENCE. Second, with the host's Haar unitaries replayed,
+some recorded p-values differ in their last one or two units in the last place (scipy's t tail
+through the platform's math library); every verdict, every other statistic and every n is
+identical. The review also found that the locked pandas reads A.6's `dtype` str as pandas' own
+string dtype, and that D017's BUILD_SPEC table misses passages that decisions have overtaken.
+
+**Decision**:
+- **Reference platform (CP5b ruling 2).** R4's exact re-derivation of run 4 is defined on its
+  reference platform: Windows x86-64 with the environment locked by `uv.lock` at 8ed2df4 and
+  OpenBLAS's Haswell kernel. `tests/test_cp4c_evidence.py` checks two canaries (a Haar-unitary
+  digest and a t-tail value) before its re-derivation tests and fails, never skips, on any other
+  platform, naming this decision; its hash tests run on every platform. CI on Linux deselects
+  the re-derivation tests. No tolerance is added. D019's platform note extends to the p-values,
+  and D019's "reproducible from the committed folder alone" holds on the reference platform. A
+  build-independent Haar identity and platform-stable p-values belong to the v2 protocol (CP5a
+  rulings 1 and 3).
+- **The reader's dtype (CP5b ruling 1).** Under the locked pandas, A.6's "`dtype` str" is pandas'
+  `str` dtype, the dtype the reader had when run 4 was evaluated. `read_runs_csv` is unchanged;
+  its test asserts a string dtype and `str` values, with digits-only values in the four pinned
+  columns so that removing any pin fails it.
+- **Ledger addendum (CP5b ruling 12).** D017's BUILD_SPEC table misses the passages below. They
+  are superseded in the same way: a row here, and an inline "Superseded by D0nn (see the
+  table)" line under the heading. BUILD_SPEC's copy of the table carries these rows after
+  D017's.
+
+| Passage (section, heading, line at 8ed2df4) | Superseded by | Status |
+|---|---|---|
+| §7.2 Top-level schema (current), a listing without `measurement`, `reservoir.window`, `reservoir.encoding_scale`, `training.washout` and `tuning` (:298) | D004 (measurement), D010 and D011 (window, encoding scale, tuning), D012 (washout) | superseded |
+| §9.3 Implementation backends, "the `qrc-thresher gate G5` evaluator … for at least three random seeds across the (n, L) grid" (:415) | D010, D011 (G0.5 runs the registered cases at one tolerance) | superseded |
+| §15.8 G5 — Full-circuit cross-check, `results/gates/G5.json` (:658); §15.9 G6 — Phase 2 readiness, `results/gates/G6.json` (:664); §15.10 G7 — Hardware readiness, `results/gates/G7.json` (:670) | D018 (legacy gate files are timestamped and never overwritten) | superseded |
+| §19.1 The five-line reproduction, `qrc-thresher gate G1` without `--config` (:769–779) | D013, D014, D016 C9 (the family is evaluated as a unit and needs an explicit `--config`; Appendix F.2 carries the CP4c sequence) | superseded |
+| §25 Differentiation vs. Prior Art, the "Closest competitor" paragraph and "self-falsifying gates (G2.5), and signed manifests have no peer" (:942) | D014 (no self-falsification clause), D018 (QRC-Lab is an architectural neighbour; `docs/REFERENCES.md`) | superseded |
+| Appendix E.8 Holm vs. Bonferroni vs. BH-FDR, "a small, fixed family of three null hypotheses" (:1277) | D013 (the registered family of five) | superseded |
+| Appendix F.6 Adding a new ablation axis, `reservoirs/ablations.py` and `cli.py:ablation_cmd` (:1413–1414) | D010 (matched ablations in `reservoirs/windowed_qrc.py`) | superseded |
+
+  The MASTER plan (a 2026-05 document) is history in full: D017 lists the two passages the CP5
+  instructions named, and D002–D020 govern wherever the plan disagrees with them. D017's §16 row
+  credits the budget fields (`n_configs`, `n_validation_evals`) to D013's schema 1.4; they came
+  with D009's schema 1.3.
+
+**Supersedes**: nothing registered. D017's ledger is extended and D019's platform note is
+qualified; neither entry is edited.
+
+**Consequences**: Run 4's verdicts and evidence bytes are unchanged. Its exact re-derivation
+passes on the reference platform, and anywhere else a failing test names the reason instead of
+showing an unexplained INSUFFICIENT_EVIDENCE.
+
+**Rationale**: R4 promises a leaf-for-leaf re-derivation, and that promise can be kept only on
+the platform that made the record; stating the platform keeps the contract exact without adding
+a tolerance.
+
+**Decided by**: PI, 2026-09-26, in the CP5b rulings (items marked (builder) proposed by the
+builder at CP5b).
+
+---
