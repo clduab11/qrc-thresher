@@ -33,7 +33,8 @@ def window_inputs(u: np.ndarray, window: int, n_qubits: int) -> np.ndarray:
     out = np.zeros((len(u), n_qubits), dtype=np.float64)
     for j in range(n_qubits):
         lag = j % int(window)
-        out[lag:, j] = u[: len(u) - lag]
+        if lag < len(u):  # a lag of T or more leaves the column zero (independent copy; G0.5)
+            out[lag:, j] = u[: len(u) - lag]
     return out
 
 

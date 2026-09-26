@@ -119,10 +119,9 @@ class TestNFeatures:
             n_features(4, 'z_and_x')
 
     def test_the_old_names_agree_with_the_helper(self) -> None:
-        from qrc_thresher.features import n_features
-
         from qrc_thresher.baselines import esn
         from qrc_thresher.config import load_config
+        from qrc_thresher.features import n_features
         from qrc_thresher.reservoirs import windowed_qrc
 
         cfg = load_config(REPO_ROOT / 'configs' / 'alpha_lite.yaml')

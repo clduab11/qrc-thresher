@@ -49,6 +49,7 @@ import numpy as np
 import pennylane as qml
 
 from qrc_thresher.config import AlphaLiteConfig
+from qrc_thresher.features import n_features
 from qrc_thresher.reservoirs.pennylane_qrc import (
     QRCParams,
     build_reservoir_params,
@@ -99,7 +100,8 @@ def window_inputs(u: np.ndarray, window: int, n_qubits: int) -> np.ndarray:
     out = np.zeros((T, n_qubits), dtype=np.float64)
     for j in range(n_qubits):
         lag = j % window
-        out[lag:, j] = u[: T - lag]
+        if lag < T:  # a lag of T or more leaves the column zero (T < lag <= 2T - 2 misbroadcast)
+            out[lag:, j] = u[: T - lag]
     return out
 
 
@@ -211,8 +213,7 @@ class WindowedReservoir:
 
     @property
     def n_features(self) -> int:
-        n = self.params.n_qubits
-        return n if self.params.readout == 'z_only' else n + n * (n - 1) // 2
+        return n_features(self.params.n_qubits, self.params.readout)
 
     @property
     def circuit_hash(self) -> str:
@@ -230,13 +231,20 @@ class WindowedReservoir:
             h = _sha256(f'{h},layer_unitaries={_unitaries_digest(self.layer_unitaries)}')
         return h
 
-    def _circuit(self, thetas: np.ndarray, phis: np.ndarray):
-        """QNode for one row: takes the n per-qubit inputs, returns the F expectation values."""
+    def _device(self):
+        return qml.device(self.params.backend, wires=self.params.n_qubits)
+
+    def _circuit(self, thetas: np.ndarray, phis: np.ndarray, dev=None):
+        """QNode for one row: takes the n per-qubit inputs, returns the F expectation values.
+
+        ``dev`` is the device to bind; a fresh one is built when None (one device per
+        features() call on every path; CP5 item D.2).
+        """
         params = self.params
         n, depth = params.n_qubits, params.depth
         entangle, unitaries = self.entangle, self.layer_unitaries
         scale = self.encoding_scale
-        dev = qml.device(params.backend, wires=n)
+        dev = dev if dev is not None else self._device()
 
         @qml.qnode(dev)
         def circuit(x: List[float]) -> list:
@@ -281,8 +289,9 @@ class WindowedReservoir:
             thetas, phis = phase_random_angles(
                 T, self.params.depth, self.params.n_qubits, self.reservoir_seed
             )
+            dev = self._device()  # one device per call; a new QNode binds the step's angles
             for t in range(T):
-                circuit = self._circuit(thetas[t], phis[t])
+                circuit = self._circuit(thetas[t], phis[t], dev)
                 rows.append(np.array(circuit([float(v) for v in inputs[t]]), dtype=np.float64))
         else:
             circuit = self._circuit(self.params.thetas, self.params.phis)
@@ -359,8 +368,8 @@ def reservoir_from_config(
 
 
 def n_features_from_config(cfg: AlphaLiteConfig) -> int:
-    n = cfg.reservoir.n_qubits
-    return n if cfg.reservoir.readout == 'z_only' else n + n * (n - 1) // 2
+    """F for a config's reservoir (a thin alias of ``qrc_thresher.features.n_features``)."""
+    return n_features(cfg.reservoir.n_qubits, cfg.reservoir.readout)
 
 
 def rks_from_config(

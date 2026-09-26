@@ -61,7 +61,8 @@ def window_inputs(u: np.ndarray, window: int) -> np.ndarray:
     T = len(u)
     out = np.zeros((T, window), dtype=np.float64)
     for j in range(window):
-        out[j:, j] = u[: T - j]
+        if j < T:  # a lag of T or more leaves the column zero
+            out[j:, j] = u[: T - j]
     return out
 
 

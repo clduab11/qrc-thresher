@@ -6,7 +6,8 @@ The ESN is implemented directly in numpy with the standard leaky-integrator upda
 
 where W_hat is the recurrent draw normalised to spectral radius 1, rho the spectral radius,
 s the input scaling, a the leak rate and b_in the input bias (D011; D009 had none). The update
-matches ReservoirPy's Reservoir given the same matrices and bias (tests/test_esn.py).
+is cross-checked against ReservoirPy's Reservoir given the same matrices and bias
+(tests/test_esn.py).
 
 Wiring rule: every unit receives the input (input connectivity 1.0), and the recurrent
 matrix is dense (recurrent connectivity 1.0, self-connections included). A draw whose
@@ -341,10 +342,11 @@ train_predict_esn = fit_predict_esn
 
 
 def _n_features(n_qubits: int, readout: str) -> int:
-    """Number of QRC features, which sets N_ESN (never 2^n_qubits)."""
-    if readout == 'z_only':
-        return n_qubits
-    return n_qubits + n_qubits * (n_qubits - 1) // 2
+    """Number of QRC features, which sets N_ESN (never 2^n_qubits); a thin alias of
+    ``qrc_thresher.features.n_features``."""
+    from qrc_thresher.features import n_features
+
+    return n_features(n_qubits, readout)
 
 
 def _grid_configs(grid: Dict[str, Sequence[float]]) -> List[ESNParams]:

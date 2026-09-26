@@ -23,10 +23,8 @@ _REQUIRED_PACKAGES = [
     'matplotlib',
     'pydantic',
     'yaml',
-    'pytest',
-    'reservoirpy',
     'click',
-]
+]  # pytest, ruff and reservoirpy are test dependencies (D018), not runtime requirements
 
 _MIN_PYTHON = (3, 11)
 
