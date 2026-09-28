@@ -6,9 +6,9 @@
 A quantum reservoir computing (QRC) workbench with pre-registered gates as its quality bar (D002):
 reservoirs that remember (windowed input, D010), fair classical baselines built in and tuned under
 the same budget (D009, D011), matched ablations (D010), paired statistics over a registered family
-(D013, D014), and aims to provide diagnostics that show what the quantum parts contribute (the
-forgetting curve today). The gates are not the product; they make the results trustworthy,
-positive or negative. The question they test:
+(D013, D014), and diagnostics that aim to show what the quantum parts contribute (so far the
+forgetting curve). The gates are not the product; they make the results trustworthy, positive or
+negative. The question they test:
 
 > Do small simulated quantum reservoirs generate temporal features that are useful, in a measurable
 > way, beyond what tuned classical baselines and ablation controls can produce?

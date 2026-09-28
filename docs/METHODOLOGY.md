@@ -164,10 +164,11 @@ lands before any comparative sweep was not met by run 4, and the finite-shot evi
 under a v2 protocol (D017's ledger, CP5a ruling 1).
 
 Classical comparators carry a label of their own kind, **"classical, no measurement cost"** (the ESN
-and RKS rows; in the scorecard also the ESN presets of G0.7, whose files record exact by protocol,
-§7; D018): a classical model has no shot budget, so the oracle qualifier does not apply to it. Rows
-written before D018 recorded `exact` on classical arms; the gate and scorecard writers of CP5 label
-each arm by its kind, and `MEASUREMENT_LABELS` in `config.py` is the one table of labels.
+and RKS rows; on the gate's console line and in the scorecard also the ESN presets of G0.7, whose
+files record exact by protocol, §7; D018): a classical model has no shot budget, so the oracle
+qualifier does not apply to it. Rows written before D018 recorded `exact` on classical arms; the
+gate and scorecard writers of CP5 label each arm by its kind, and `MEASUREMENT_LABELS` in
+`config.py` is the one table of labels.
 
 ## 7. G0.7 v1: the Memory Sanity Gate (D005, D008)
 
@@ -188,7 +189,7 @@ $p = (1 + \#\{\text{null} \ge \text{observed}\}) / (n + 1)$ and a seed passes a 
   output thresholded at 0.5.
 - **Degenerate seeds** fail their clause without a score: every training feature column with
   std $\le 10^{-12}$, any held-out prediction column with std $\le 10^{-12}$, or a non-finite
-  statistic.
+  feature, prediction or statistic.
 
 The gate PASSes only if every seed passes both clauses. `qrc-thresher gate G0.7 --config PATH
 [--model M] [--tuning-config PATH]` writes `results/gates/G0.7.<model>.<stamp>.json` (with
@@ -196,7 +197,8 @@ The gate PASSes only if every seed passes both clauses. `qrc-thresher gate G0.7 
 `--model tuned_qrc` evaluates the tuned design_STM of the tuning config on alpha_lite.yaml's pairs,
 which is G1's clause (a).
 Its measurement label is `exact (oracle upper bound)` by protocol, also for the ESN presets
-(`esn_linear`, `esn_nonlinear`), which the scorecard shows by kind with a footnote.
+(`esn_linear`, `esn_nonlinear`), which the gate's console line and the scorecard show by kind (the
+scorecard with a footnote).
 
 ## 8. The Per-Member Claims (D014)
 
