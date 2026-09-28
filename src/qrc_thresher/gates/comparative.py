@@ -46,8 +46,14 @@ MEMBERS = ('G1', 'G2', 'G2.5', 'G3', 'G4')
 PROTOCOL_FILE = Path('configs') / 'gates' / 'COMPARATIVE.v1.yaml'
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 INSUFFICIENT = 'INSUFFICIENT_EVIDENCE'
-CLASSICAL_LABEL = MEASUREMENT_LABELS['classical']  # D018; one label table (CP5b ruling C1)
+CLASSICAL_LABEL = MEASUREMENT_LABELS['classical']  # D018; one label table (CP5b C1)
 DEFAULT_DESIGNS = ('default', 'default_w1')
+# The family-level keys every member view carries beside its member dict (write_family_report);
+# the scorecard checks a view against the family with this list (CP5b.2 F1).
+VIEW_PROVENANCE_KEYS = ('protocol_path', 'protocol_sha256', 'config_hash', 'sweep_id',
+                        'tuning_record_sha', 'git_commit', 'measurement_model',
+                        'measurement_label', 'alpha', 'family_size', 'holm_family',
+                        'timestamp_utc')
 Pair = Tuple[int, int]
 
 
@@ -619,11 +625,7 @@ def write_family_report(result: dict, out_dir: Optional[Path] = None) -> Dict[st
         f.write(text)
     family_sha = hashlib.sha256(family_path.read_bytes()).hexdigest()
     paths = {'family': family_path}
-    provenance = {k: result[k] for k in (
-        'protocol_path', 'protocol_sha256', 'config_hash', 'sweep_id', 'tuning_record_sha',
-        'git_commit', 'measurement_model', 'measurement_label', 'alpha', 'family_size',
-        'holm_family', 'timestamp_utc',
-    )}
+    provenance = {k: result[k] for k in VIEW_PROVENANCE_KEYS}
     for name in MEMBERS:
         safe = re.sub(r'[^A-Za-z0-9._-]+', '_', name)
         gate_path = _fresh(out_dir, f'{safe}.{stamp}')
@@ -704,7 +706,7 @@ def resolve_config(
     def _hash_of(path: Path) -> Optional[str]:
         try:
             return _config_hash(path)
-        except (OSError, ValueError, yaml.YAMLError, ValidationError):
+        except (OSError, ValueError, TypeError, yaml.YAMLError, ValidationError):
             return None
 
     cfg_path = next((c for c in candidates if c.is_file()
@@ -714,7 +716,7 @@ def resolve_config(
                           f'(tried {[c.as_posix() for c in candidates]})')
     try:
         designs = designs_from_records(load_config(cfg_path), records)
-    except (OSError, ValueError, yaml.YAMLError, ValidationError) as exc:
+    except (OSError, ValueError, TypeError, yaml.YAMLError, ValidationError) as exc:
         return None, {}, f'config {cfg_path.as_posix()} does not load: {exc}'
     return designs, {str(r['record_sha256']): task for task, r in records.items()}, None
 

@@ -286,6 +286,17 @@ class TestCp5b1:
         assert json.loads(second.read_bytes().decode('ascii'))['result'] == 'FAIL'
         assert json.loads(second.read_bytes().decode('ascii'))['run_ids'] == ['r2']
 
+    def test_the_writer_never_overwrites_a_path_it_is_handed(self, tmp_path, monkeypatch) -> None:
+        from qrc_thresher.commands import gate
+        from qrc_thresher.gates import comparative
+
+        existing = tmp_path / 'G5.x.json'
+        existing.write_bytes(b'kept')
+        monkeypatch.setattr(comparative, '_fresh', lambda out_dir, stem: existing)
+        with pytest.raises(FileExistsError):
+            gate._write_gate_result(tmp_path, 'G5', 'PASS', {'x': 1.0}, ['r1'])
+        assert existing.read_bytes() == b'kept'
+
     def test_the_run_failed_line_carries_the_label(self, tmp_path, monkeypatch) -> None:
         from qrc_thresher import deploy
 

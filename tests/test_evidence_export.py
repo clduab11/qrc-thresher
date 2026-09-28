@@ -267,7 +267,8 @@ class TestExport:
         for column in ('cli_command', 'git_branch', 'platform', 'artifact_paths',
                        'package_versions', 'config_path'):
             assert column in text, column
-        assert 'qrc-thresher tune --config' in text  # the CP4c sequence
+        # the reproduction pointer or the CP4c sequence (CP5b ruling 18)
+        assert 'qrc-thresher tune --config' in text
         assert _evidence().scan_text(text) == []
 
     def test_an_https_url_does_not_trip_the_drive_letter_check(self, tree) -> None:
@@ -424,14 +425,51 @@ class TestCp5b1Refusals:
     def test_write_manifest_orders_case_insensitively_by_path_parts(self, tmp_path) -> None:
         ev = _evidence()  # C11: the committed order on every platform
         folder = tmp_path / 'folder'
-        for rel in ('G0.7.x.json', 'configs/c.yaml', 'B.json', 'COMPARATIVE.v1.x.json', 'a/x.json'):
+        for rel in ('G0.7.x.json', 'configs/c.yaml', 'B.json', 'COMPARATIVE.v1.x.json', 'a/x.json',
+                    'a.json'):
             (folder / rel).parent.mkdir(parents=True, exist_ok=True)
             (folder / rel).write_text(rel, encoding='utf-8')
         entries = ev.write_manifest(folder)
         listed = [line.split('  ', 1)[1] for line in
                   (folder / 'MANIFEST.sha256').read_text(encoding='utf-8').splitlines()]
-        assert listed == list(entries) == ['a/x.json', 'B.json', 'COMPARATIVE.v1.x.json',
+        assert listed == list(entries) == ['a/x.json', 'a.json', 'B.json', 'COMPARATIVE.v1.x.json',
                                            'configs/c.yaml', 'G0.7.x.json']
+
+    def test_the_run_4_sweep_gets_the_sequence_and_no_pointer(self, tree, monkeypatch) -> None:
+        ev = _evidence()  # T13(a): the CP4c section is keyed on run 4's sweep id (C10)
+        monkeypatch.setattr(ev, 'RUN4_SWEEP_ID', SWEEP_ID)
+        target = _export(tree)
+        text = (target / 'README.md').read_text(encoding='utf-8')
+        assert '## The CP4c command sequence' in text and '- Reproduction:' not in text
+
+    def test_one_reproduction_pointer_per_family(self, tmp_path) -> None:
+        ev = _evidence()  # T13(b), F2 (CP5b ruling 18)
+        staged = tmp_path / 'staged'
+        staged.mkdir()
+        families = []
+        for i, cfg in enumerate(('a.yaml', 'b.yaml')):
+            (tmp_path / cfg).write_text('x: 1\n', encoding='utf-8')
+            families.append({'data': {'family': 'COMPARATIVE', 'version': 1, 'git_commit': COMMIT},
+                             'path': Path(f'COMPARATIVE.v1.2026092{i}T000000000000Z.json'),
+                             'config_hash': 'a' * 64, 'sweeps': [f'sweep-{i}'],
+                             'config': tmp_path / cfg})
+        text = ev._readme(SHORT, families, {}, staged, [])
+        pointers = [line for line in text.splitlines() if line.startswith('- Reproduction:')]
+        assert len(pointers) == 2
+        assert 'configs/a.yaml' in pointers[0] and 'configs/b.yaml' not in pointers[0]
+        assert 'configs/b.yaml' in pointers[1] and 'configs/a.yaml' not in pointers[1]
+
+    def test_the_same_family_given_twice_exports_once(self, tree) -> None:
+        family = tree['paths']['family']  # T13(c), C13 (N7)
+        target = _export(tree, gate_jsons=[family, family.resolve(), tree['g07']])
+        text = (target / 'README.md').read_text(encoding='utf-8')
+        assert text.count('- Family: ') == 1
+        _no_staging_left(tree)
+
+    def test_the_generic_mapping_row_appears_once(self, tree) -> None:
+        target = _export(tree)  # T13(d), C10
+        text = (target / 'README.md').read_text(encoding='utf-8')
+        assert text.count('| `results/gates/<X>` | `<X>` |') == 1
 
 
 class TestCli:

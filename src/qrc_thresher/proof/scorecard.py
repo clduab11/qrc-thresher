@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from qrc_thresher.config import MEASUREMENT_LABELS
+from qrc_thresher.gates.comparative import VIEW_PROVENANCE_KEYS
 from qrc_thresher.proof.evidence import (
+    COMMIT_RE,
     MEMBERS,
     EvidenceError,
     kind_of,
@@ -36,7 +38,6 @@ CLASSICAL_LABEL = MEASUREMENT_LABELS['classical']
 MISSING = 'missing'
 NOT_PUBLISHED = 'not published (health output stays local)'
 _STAMP = re.compile(r'\.(\d{8}T\d{12}Z)(?:\.\d+)?\.json$')
-_HEX = re.compile(r'[0-9a-fA-F]{7,64}')
 
 # Plain-language claims, sourced from DECISIONS (D005/D008 for G0.7, D010/D011 for G0.5,
 # D014 for G1-G4), never from BUILD_SPEC §15.
@@ -136,7 +137,8 @@ class _Evidence:
     def _check_commit(value, ref: str) -> None:
         """A cited file's commit must be a hex hash: never 'unknown' or '-dirty' (CP5b C21)."""
         text = str(value or '')
-        if not text or text == 'unknown' or text.endswith('-dirty') or not _HEX.fullmatch(text):
+        if (not text or text == 'unknown' or text.endswith('-dirty')
+                or not COMMIT_RE.fullmatch(text)):
             raise EvidenceError(f'{ref}: its commit {text!r} is unknown, dirty or not a hash; '
                                 'the scorecard cites clean commits only')
 
@@ -166,8 +168,19 @@ class _Evidence:
                 for view_name, view, _sha in views:
                     if view.get('family_sha256') != digest:
                         continue
-                    member = data['members'][view['gate']]
-                    for key, value in member.items():  # every member key agrees with its view
+                    member = data['members'].get(view['gate'])
+                    if not isinstance(member, dict):
+                        raise EvidenceError(f'{view_name}: its member is missing from the family')
+                    # The view is what write_family_report writes: the member dict plus the
+                    # family's provenance keys (CP5b.2 F1). (builder) A provenance key the view
+                    # does not hold is tolerated: the pinned scorecard fixtures write a subset;
+                    # one it holds must equal the family's value.
+                    for key in VIEW_PROVENANCE_KEYS:
+                        if key in view and view[key] != data.get(key):
+                            raise EvidenceError(f'{view_name}: disagrees with its family on {key}')
+                    for key, value in member.items():
+                        if key in VIEW_PROVENANCE_KEYS:
+                            continue
                         if key not in view or view[key] != value:
                             raise EvidenceError(f'{view_name}: disagrees with its family on {key}')
                 self._check_commit(data.get('git_commit'), self._ref(folder, name))
@@ -236,8 +249,9 @@ def _comparison_numbers(member: dict, comparison: dict, *, gated: bool) -> str:
 
 
 def _ci_label(comparison: dict) -> str:
-    """'BCa <level>' from comparison['ci_level'] (CP5b C22); a record without the key (written
-    before the key existed) is labelled at the registered 0.95 (builder)."""
+    """'BCa <level>' from comparison['ci_level'] (CP5b C22). Every compare_arms record carries
+    ci_level (metrics/paired.py since its first commit); the 0.95 default, COMPARATIVE.v1's
+    registered level, serves hand-built records only (CP5b ruling 19)."""
     level = comparison.get('ci_level', 0.95)
     return f'BCa {float(level):.0%}'
 

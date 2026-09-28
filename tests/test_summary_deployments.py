@@ -258,6 +258,26 @@ class TestDeployments:
         other = _groups(table)[('esn', 'tuned', 'tuned', 'stm_memory')]
         assert other['n'] == 12  # only the refused group is refused
 
+    def test_resolve_config_returns_a_reason_for_a_config_that_does_not_hash(self, tmp_path,
+                                                                            monkeypatch) -> None:
+        import json
+
+        from qrc_thresher.tuning import record_sha256
+
+        fam = _comparative()  # T15, F4: a YAML date makes json.dumps raise TypeError
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / 'configs').mkdir()
+        (tmp_path / 'configs' / 'dated.yaml').write_text('when: 2026-09-26\n', encoding='utf-8')
+        folder = tmp_path / 'results' / 'tuning' / CONFIG_HASH
+        folder.mkdir(parents=True)
+        for task in ('stm', 'parity', 'narma'):
+            record = {'config_hash': CONFIG_HASH, 'config_path': 'configs/dated.yaml',
+                      'sweep_id': SWEEP_ID, 'task': task, 'qrc': {}, 'esn': {}, 'rks': {}}
+            record['record_sha256'] = record_sha256(record)
+            (folder / f'{task}.json').write_text(json.dumps(record, indent=2), encoding='utf-8')
+        designs, record_task, reason = fam.resolve_config(CONFIG_HASH)
+        assert designs is None and record_task == {} and reason
+
     def test_summary_command_accepts_a_config_and_writes_the_table(self, tmp_path,
                                                                     monkeypatch) -> None:
         from click.testing import CliRunner

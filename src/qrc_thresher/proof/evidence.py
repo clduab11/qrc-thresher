@@ -79,6 +79,8 @@ CP4C_SEQUENCE = (
 RUN4_SWEEP_ID = '20260924T214530147999Z'
 LEGACY_GATES = ('G0.5', 'G5', 'G6', 'G7')  # the only legacy JSONs the export accepts (E.1)
 
+COMMIT_RE = re.compile(r'[0-9a-f]{7,40}')  # a clean git hash (CP5b.2 F5)
+
 _DRIVE = re.compile(r'(?<![A-Za-z])[A-Za-z]:[\\/]')
 _HOME = re.compile(r'/Users/|/home/')
 _JSON_KEY = re.compile(r'"(?:' + '|'.join(FORBIDDEN_KEYS) + r')"\s*:')
@@ -252,7 +254,7 @@ def _check_commits(commits: Dict[str, str]) -> str:
             raise EvidenceError(f"{name}: commit 'unknown' is refused")
         if commit.endswith('-dirty'):
             raise EvidenceError(f'{name}: commit {commit} is -dirty and refused')
-        if not re.fullmatch(r'[0-9a-f]{7,40}', commit):
+        if not COMMIT_RE.fullmatch(commit):
             raise EvidenceError(f'{name}: commit {commit!r} is not a git hash')
     distinct = sorted(set(commits.values()))
     if len(distinct) != 1:
@@ -558,11 +560,11 @@ def _readme(short: str, families: List[dict], files: Dict[str, str], staged: Pat
                      f"commit {data.get('git_commit')}.")
     for note in notes:
         lines.append(f'- Rows: {note}.')
-    if families and not any(RUN4_SWEEP_ID in family['sweeps'] for family in families):
-        # (builder) A one-line pointer, not a command section: the pinned export test asserts the
-        # tune command in every family README, while C10 records the full sequence for run 4 only.
-        cfg_names = ', '.join(sorted({f'configs/{family["config"].name}' for family in families}))
-        lines.append(f'- Reproduction: `qrc-thresher tune --config {cfg_names}`, then the run, '
+    for family in families:  # one pointer per family that is not run 4 (CP5b ruling 18)
+        if RUN4_SWEEP_ID in family['sweeps']:
+            continue
+        cfg_name = f'configs/{family["config"].name}'
+        lines.append(f'- Reproduction: `qrc-thresher tune --config {cfg_name}`, then the run, '
                      'ablation, baseline and gate commands of that config (BUILD_SPEC App. F.2); '
                      'the full command sequence is recorded only for run 4 (D019).')
     lines += ['', '## Files', '', '| file | sha256 | recorded as |', '|---|---|---|']

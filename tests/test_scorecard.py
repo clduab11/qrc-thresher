@@ -395,8 +395,8 @@ class TestCp5b1:
                                                                           monkeypatch) -> None:
         sc = _scorecard()  # C14
         folder = _folder(tmp_path, 'abc1234', family=_family(RESULTS))
-        absolute = sc.build_scorecard([folder.resolve()], (tmp_path / 'docs').resolve())
         monkeypatch.chdir(tmp_path)
+        absolute = sc.build_scorecard([folder.resolve()], Path('docs'))
         relative = sc.build_scorecard([Path('docs') / 'evidence' / 'abc1234'], Path('docs'))
         assert absolute == relative
         rows = _table_rows(relative)
@@ -453,6 +453,111 @@ class TestCp5b1:
         rows = _table_rows(sc.build_scorecard([folder], tmp_path / 'docs'))
         assert rows['G2'][1][2] == 'reported only (no verdict)'
         assert rows['G4'][1][2] == 'reported only (no verdict)'  # the member is INSUFFICIENT
+
+
+    def test_the_newest_stamp_wins_when_the_older_folder_sorts_first(self, tmp_path) -> None:
+        sc = _scorecard()  # T9: the mirror of the cross-folder test (first-seen must not win)
+        older, newer = '20260923T100000000000Z', '20260923T110000000000Z'
+        flipped = {**RESULTS, 'G2': 'FAIL'}
+        first = _folder(tmp_path, 'aaa1111', family=_family(flipped, stamp=older), stamp=older,
+                        g07s=[('tuned_qrc', 'comparative', 'FAIL', older, True)],
+                        legacy=[('G0.5', 'FAIL', older)])
+        second = _folder(tmp_path, 'bbb2222', family=_family(RESULTS, stamp=newer), stamp=newer,
+                         g07s=[('tuned_qrc', 'comparative', 'PASS', newer, True)],
+                         legacy=[('G0.5', 'PASS', newer)])
+        for order in ([first, second], [second, first]):
+            rows = _table_rows(sc.build_scorecard(order, tmp_path / 'docs'))
+            assert rows['G2'][0][2] == 'PASS' and newer in rows['G2'][0][7]
+            assert len([r for r in rows['G2'] if 'default-design' not in r[1]]) == 1
+            assert rows['G0.7'][0][2] == 'PASS' and newer in rows['G0.7'][0][3]
+            assert rows['G0.5'][0][2] == 'PASS' and newer in rows['G0.5'][0][7]
+
+    @pytest.mark.parametrize('kind', ['g07', 'g05'])
+    def test_a_dirty_g07_or_legacy_file_is_refused(self, tmp_path, kind) -> None:
+        sc = _scorecard()  # T10: C21 applies to every cited kind, not the family only
+        folder = _folder(tmp_path, 'abc1234',
+                         g07s=[('tuned_qrc', 'comparative', 'PASS', STAMP, True)],
+                         legacy=[('G0.5', 'PASS', STAMP)])
+        name = f'G0.7.tuned_qrc.{STAMP}.json' if kind == 'g07' else f'G0.5.{STAMP}.json'
+        path = folder / name
+        data = json.loads(path.read_text(encoding='utf-8'))
+        data['git_commit_hash'] = data['git_commit_hash'] + '-dirty'
+        path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+        _write_manifest(folder)
+        with pytest.raises(sc.EvidenceError, match=re.escape(name) + '.*dirty'):
+            sc.build_scorecard([folder], tmp_path / 'docs')
+
+    def test_a_family_with_an_unknown_commit_is_refused(self, tmp_path) -> None:
+        sc = _scorecard()  # T10
+        fname, record = _family(RESULTS, commit='unknown')
+        folder = _folder(tmp_path, 'abc1234', family=(fname, record))
+        with pytest.raises(sc.EvidenceError, match=re.escape(fname)):
+            sc.build_scorecard([folder], tmp_path / 'docs')
+
+    def test_the_interval_level_and_the_g1_claim_come_from_the_record(self, tmp_path) -> None:
+        sc = _scorecard()  # T11: C22's level is read, the floor renders '>', G1's claim suffix
+        fname, record = _family(RESULTS)
+        record['members']['G2']['comparison']['ci_level'] = 0.9
+        folder = _folder(tmp_path, 'abc1234', family=(fname, record))
+        rows = _table_rows(sc.build_scorecard([folder], tmp_path / 'docs'))
+        g2 = rows['G2'][0][3]
+        assert '[BCa 90% ' in g2 and 'floor accuracy > 0.7 met' in g2
+        assert rows['G1'][0][1].endswith(
+            "(alpha_lite.yaml's 3 pairs; z_only; (b) chosen post hoc, D014).")
+
+    def test_a_view_as_the_writer_writes_it_is_accepted(self, tmp_path) -> None:
+        sc = _scorecard()  # T12(a), F1: per-design sweep ids and the provenance keys
+        from qrc_thresher.gates import comparative
+
+        s1, s2 = '20260923T120000000000Z', '20260923T121500000000Z'
+        fname, record = _family(RESULTS)
+        record['sweep_id'] = {'stm': s1, 'parity': s2, 'narma': s1}
+        for member in record['members'].values():
+            member['sweep_id'] = comparative._sweep_for(record['sweep_id'], member['design'])
+        folder = tmp_path / 'docs' / 'evidence' / 'abc1234'
+        folder.mkdir(parents=True)
+        (folder / fname).write_text(json.dumps(record, indent=2), encoding='utf-8')
+        family_sha = _sha256(folder / fname)
+        provenance = {k: record[k] for k in comparative.VIEW_PROVENANCE_KEYS}
+        for m in MEMBERS:
+            view = {**record['members'][m], **provenance,
+                    'family_json': f'results/gates/{fname}', 'family_sha256': family_sha}
+            (folder / f'{m}.{STAMP}.json').write_text(json.dumps(view, indent=2), encoding='utf-8')
+        (folder / 'README.md').write_text('# Evidence abc1234\n', encoding='utf-8')
+        _write_manifest(folder)
+        rows = _table_rows(sc.build_scorecard([folder], tmp_path / 'docs'))
+        assert rows['G2'][0][2] == 'PASS' and rows['G3'][0][2] == 'FAIL'
+
+    @pytest.mark.parametrize('key, value', [('git_commit', COMMIT_FAMILY + '-dirty'),
+                                            ('config_hash', 'f' * 64)])
+    def test_a_view_whose_provenance_disagrees_is_refused(self, tmp_path, key, value) -> None:
+        sc = _scorecard()  # T12(b), F1
+        folder = _folder(tmp_path, 'abc1234', family=_family(RESULTS))
+        view = folder / f'G3.{STAMP}.json'
+        data = json.loads(view.read_text(encoding='utf-8'))
+        data[key] = value
+        view.write_text(json.dumps(data, indent=2), encoding='utf-8')
+        _write_manifest(folder)
+        with pytest.raises(sc.EvidenceError, match=f'disagrees with its family on {key}'):
+            sc.build_scorecard([folder], tmp_path / 'docs')
+
+    def test_a_view_whose_member_is_missing_is_refused(self, tmp_path) -> None:
+        sc = _scorecard()  # T12(c), F1
+        folder = _folder(tmp_path, 'abc1234', family=_family(RESULTS))
+        fname = f'COMPARATIVE.v1.{STAMP}.json'
+        record = json.loads((folder / fname).read_text(encoding='utf-8'))
+        del record['members']['G4']
+        (folder / fname).write_text(json.dumps(record, indent=2), encoding='utf-8')
+        family_sha = _sha256(folder / fname)
+        for m in MEMBERS:  # re-bind every view to the edited family
+            suffix = '.1' if m == 'G2.5' else ''
+            path = folder / f'{m}.{STAMP}{suffix}.json'
+            view = json.loads(path.read_text(encoding='utf-8'))
+            view['family_sha256'] = family_sha
+            path.write_text(json.dumps(view, indent=2), encoding='utf-8')
+        _write_manifest(folder)
+        with pytest.raises(sc.EvidenceError, match='member is missing'):
+            sc.build_scorecard([folder], tmp_path / 'docs')
 
 
 class TestCli:
